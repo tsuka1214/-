@@ -225,9 +225,16 @@ export function isAllowedNotificationTimeRange(timeStr: string): boolean {
 }
 
 /**
- * 深夜0時〜5時59分の間かどうかをチェック（通知完全抑制対象）
+ * 深夜0時〜5時59分（JST）の間かどうかをチェック（通知完全抑制対象）
  */
 export function isMidnightQuietHours(date: Date = new Date()): boolean {
-  const h = date.getHours();
+  // Use Intl to get hour in JST
+  const jstHourStr = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    hour12: false
+  }).format(date);
+  
+  const h = parseInt(jstHourStr, 10);
   return h >= 0 && h < 6;
 }

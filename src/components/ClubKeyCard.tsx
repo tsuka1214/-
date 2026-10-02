@@ -60,10 +60,17 @@ export const ClubKeyCard: React.FC = () => {
   // 今日の施錠報告かどうか判定するヘルパー
   const checkIsReportedToday = (status: ClubKeyStatus | null | undefined): boolean => {
     if (!status || !status.updatedAt) return false;
-    const d = new Date(status.updatedAt);
     const today = getTodayString(); // YYYY-MM-DD
-    const dateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-    return dateStr === today && status.status === 'closed';
+    
+    // Get YYYY-MM-DD from status.updatedAt in JST
+    const jstDateStr = new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(status.updatedAt)).replace(/\//g, '-');
+    
+    return jstDateStr === today && status.status === 'closed';
   };
 
   const isKey1ReportedToday = useMemo(() => checkIsReportedToday(keyStatuses?.key1), [keyStatuses?.key1]);
@@ -72,25 +79,45 @@ export const ClubKeyCard: React.FC = () => {
   // 時刻フォーマット（例: "18:30" または "昨日 18:30"）
   const formatTimeDisplay = (timestamp: number): string => {
     if (!timestamp) return '記録なし';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const timeStr = `${hours}:${minutes}`;
-
+    
     const todayStr = getTodayString();
-    const targetDateStr = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+    const date = new Date(timestamp);
+    const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+    
+    const parts = jstFormatter.formatToParts(date);
+    const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+    
+    const jstYear = getPart('year');
+    const jstMonth = getPart('month');
+    const jstDay = getPart('day');
+    const jstHours = getPart('hour');
+    const jstMinutes = getPart('minute');
+    const jstDateStr = `${jstYear}-${jstMonth}-${jstDay}`;
+    const timeStr = `${jstHours}:${jstMinutes}`;
 
-    if (targetDateStr === todayStr) {
+    if (jstDateStr === todayStr) {
       return timeStr;
     } else {
+      const now = new Date();
       const yesterday = new Date(now);
       yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = `${yesterday.getFullYear()}-${(yesterday.getMonth() + 1).toString().padStart(2, '0')}-${yesterday.getDate().toString().padStart(2, '0')}`;
-      if (targetDateStr === yesterdayStr) {
+      
+      const yParts = jstFormatter.formatToParts(yesterday);
+      const getYPart = (type: string) => yParts.find(p => p.type === type)?.value || '';
+      const yesterdayStr = `${getYPart('year')}-${getYPart('month')}-${getYPart('day')}`;
+      
+      if (jstDateStr === yesterdayStr) {
         return `昨日 ${timeStr}`;
       }
-      return `${date.getMonth() + 1}/${date.getDate()} ${timeStr}`;
+      return `${parseInt(jstMonth, 10)}/${parseInt(jstDay, 10)} ${timeStr}`;
     }
   };
 

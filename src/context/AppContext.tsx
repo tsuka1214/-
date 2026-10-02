@@ -861,39 +861,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 一度その日のまとめ通知を生成したら、その日は二度と生成しない
       // 日付ごとに「送信済みフラグ」をFirestoreに記録し、重複を防ぐ
       // アプリを再起動しても、送信済みフラグが維持されるようにする
+      // ※ドメインを跨いでも重複しないよう localStorage ではなく Firestore を基準にする
 
-      // ① LocalStorageチェック
-      const localFiredKey = `daily_summary_fired_${today}`;
-      if (typeof window !== 'undefined' && localStorage.getItem(localFiredKey) === 'true') {
-        console.log('[SummaryCheck] 本日は既に送信済みです（LocalStorageフラグ検出）', { today });
-        return;
-      }
-
-      // ② settings.lastSummaryDateチェック
+      // ① settings.lastSummaryDateチェック
       if (currentSettings.lastSummaryDate === today) {
         console.log('[SummaryCheck] 本日は既に送信済みです（lastSummaryDate検出）', { today });
-        try { localStorage.setItem(localFiredKey, 'true'); } catch {}
         return;
       }
 
-      // ③ notificationsコレクション内チェック
+      // ② notificationsコレクション内チェック (Refを使用して最新状態を確認)
       const hasTodaySummary = (notificationsRef.current || []).some(
         (n) => n.type === 'summary' && n.relatedDate === today
       );
       if (hasTodaySummary) {
         console.log('[SummaryCheck] 本日のまとめ通知は既に生成済みです（notificationsコレクション検出）', { today });
-        try { localStorage.setItem(localFiredKey, 'true'); } catch {}
         return;
       }
 
-      // ④ Firestore summary_logs/{today} チェック（アプリ再起動・複数端末での重複完全防止）
+      // ③ Firestore summary_logs/{today} チェック（アプリ再起動・複数ドメイン間での重複完全防止）
       isSummaryTriggeringRef.current = true;
       try {
         const summaryDocRef = doc(db, 'summary_logs', today);
         const lockSnap = await getDoc(summaryDocRef);
         if (lockSnap.exists() && lockSnap.data()?.sent === true) {
           console.log('[SummaryCheck] 本日は既に送信済みです（Firestore送信済みフラグ検出）', { today });
-          try { localStorage.setItem(localFiredKey, 'true'); } catch {}
           return;
         }
 
@@ -903,7 +894,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currentTimeStr,
         });
 
-        // 送信済みフラグをFirestoreに先行記録（アプリ再起動でも維持される）
+        // 送信済みフラグをFirestoreに先行記録（アプリ再起動・別ドメインでも維持される）
         await setDoc(summaryDocRef, {
           targetDate: today,
           sent: true,
@@ -912,10 +903,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           configuredTime,
           isForceManual: false,
         }, { merge: true });
-
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem(localFiredKey, 'true'); } catch {}
-        }
 
         // まとめ通知の生成・配信
         await triggerManualSummary(today, false);
@@ -1084,17 +1071,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return;
         }
 
-        // 初回催促のローカル二重送信防止
-        if (currentCount === 0) {
-          const localCheckKey = `key_reminder_${today}_unified_count1`;
-          if (typeof window !== 'undefined' && localStorage.getItem(localCheckKey) === 'true') {
+        // 催促メッセージの構築
+        const nextCount = currentCount + 1;
+
+        // 【要件1】二重送信の防止（Firestoreでのロック）
+        // 複数デバイスや複数ドメイン(ai.studio vs vercel.app)での同時送信を防止
+        const lockId = `${today}_keyrem_${nextCount}`;
+        const lockDocRef = doc(db, 'notification_logs', lockId);
+        
+        try {
+          const lockSnap = await getDoc(lockDocRef);
+          if (lockSnap.exists()) {
+            console.log('[KeyReminder] 他のインスタンスで既に送信済みまたは処理中のためスキップします', { lockId });
             isReminderTriggeringRef.current = false;
             return;
           }
+          // ロックを取得（送信処理中として記録）
+          await setDoc(lockDocRef, {
+            type: 'key_reminder',
+            date: today,
+            count: nextCount,
+            status: 'sending',
+            startTime: Date.now(),
+          });
+        } catch (lockErr) {
+          console.error('[KeyReminder] ロック取得エラー:', lockErr);
+          isReminderTriggeringRef.current = false;
+          return;
         }
 
-        // 催促メッセージの構築
-        const nextCount = currentCount + 1;
         const key1Name = currentSettings.keyNames?.key1 || '鍵①';
         const key2Name = currentSettings.keyNames?.key2 || '鍵②';
         
@@ -1126,14 +1131,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           updatedAt: Date.now(),
         }, { merge: true });
 
-        // 2. ローカルストレージに送信済みフラグ（二重防止）
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem(`key_reminder_${today}_unified_count${nextCount}`, 'true');
-          } catch {}
-        }
-
-        // 3. notificationsコレクションに追加 (アプリ内通知)
+        // 2. notificationsコレクションに追加 (アプリ内通知)
         if (isAppEnabled) {
           await addDoc(collection(db, 'notifications'), {
             title: notifTitle,
@@ -1152,16 +1150,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (lwConfig.clientId && lwConfig.privateKey && lwConfig.botId && lwConfig.channelId) {
             console.log('[KeyReminder] LINE WORKSへ送信を試みます...');
             sendLineWorksNotification(lwConfig, notifMessage).then((res) => {
+              let errorMsg = res.error;
+              if (res.status === 404) {
+                errorMsg = 'Channel IDまたはBotの招待を確認してください (HTTP 404: NOT_FOUND)';
+              }
+
               const status = {
                 success: res.success,
-                error: res.success ? undefined : res.error,
+                error: res.success ? undefined : errorMsg,
                 timestamp: Date.now(),
               };
               updateSettings({ lastLwKRStatus: status });
               if (res.success) {
                 console.log('[KeyReminder] LINE WORKSへの送信に成功しました');
               } else {
-                console.error('[KeyReminder] LINE WORKSへの送信に失敗しました:', res.error);
+                console.error('[KeyReminder] LINE WORKSへの送信に失敗しました:', errorMsg);
               }
             }).catch(err => {
               console.error('[KeyReminder] LINE WORKS送信中に予期せぬエラー:', err);
@@ -1173,6 +1176,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             console.warn('[KeyReminder] LINE WORKSの設定が不足しているため送信をスキップしました');
           }
         }
+
+        // 送信完了としてロックを更新
+        await updateDoc(lockDocRef, {
+          status: 'sent',
+          endTime: Date.now(),
+        }).catch(err => console.error('[KeyReminder] ロック更新エラー:', err));
       } catch (err: any) {
         console.error('[KeyReminder] 催促処理中に重大なエラーが発生しました:', err);
       } finally {
@@ -1263,20 +1272,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // すでに今日の連絡（欠席・遅刻・早退・緊急遽刻・既に出席）がある場合はスキップ
         const hasReported = (attendances || []).some(a => a.date === today && a.memberName === myMemberName);
         if (!hasReported) {
-          const lastAutoKey = `last_auto_attendance_open_${myMemberName}_${today}`;
-          if (localStorage.getItem(lastAutoKey) !== 'true') {
+          try {
+            // Firestoreによる多重実行防止（ロック）
+            const lockDocRef = doc(db, 'summary_logs', `auto_att_open_${myMemberName}_${today}`);
+            const lockSnap = await getDoc(lockDocRef);
+            if (lockSnap.exists()) return;
+
             console.log(`[AutoAttendance] アプリ起動を検知。${myMemberName}さんの出席を自動記録します。`);
-            try {
-              localStorage.setItem(lastAutoKey, 'true');
-              await saveAttendance({
-                date: today,
-                memberName: myMemberName,
-                type: '出席',
-                reason: '自動出席記録（起動時）',
-              });
-            } catch (err) {
-              console.error('[AutoAttendance] 自動出席の記録に失敗しました:', err);
-            }
+            
+            // 先にFirestoreにロックをかける
+            await setDoc(lockDocRef, { fired: true, at: Date.now(), memberName: myMemberName });
+
+            await saveAttendance({
+              date: today,
+              memberName: myMemberName,
+              type: '出席',
+              reason: '自動出席記録（起動時）',
+            });
+          } catch (err) {
+            console.error('[AutoAttendance] 自動出席の記録に失敗しました:', err);
           }
         }
       }
@@ -1284,23 +1298,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // --- Mode: at_specific_time (設定時刻に未連絡者全員を「出席」にする) ---
       if (config.mode === 'at_specific_time' && config.time) {
         if (currentTimeStr === config.time) {
-          const globalAutoKey = `auto_attendance_global_done_${today}`;
-          if (localStorage.getItem(globalAutoKey) === 'true') return;
-
           try {
             // Firestoreによる多重実行防止（ロック）
             const lockDocRef = doc(db, 'summary_logs', `auto_att_${today}`);
             const lockSnap = await getDoc(lockDocRef);
-            if (lockSnap.exists()) {
-              localStorage.setItem(globalAutoKey, 'true');
-              return;
-            }
+            if (lockSnap.exists()) return;
 
             console.log(`[AutoAttendance] 設定時刻(${config.time})に達しました。未連絡者の出席を一括記録します。`);
             
             // 先にロックをかける
             await setDoc(lockDocRef, { fired: true, at: Date.now(), executedBy: myMemberName || deviceToken });
-            localStorage.setItem(globalAutoKey, 'true');
 
             // 未連絡者を抽出
             const reportedNames = new Set((attendances || []).filter(r => r.date === today).map(r => r.memberName));
@@ -2024,12 +2031,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    // Immediately latch in local state and localStorage
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(`daily_summary_fired_${targetDate}`, 'true');
-      } catch {}
-    }
     setSettings((prev) => ({ ...prev, lastSummaryDate: targetDate }));
 
     // Record in summary_logs collection to lock across all devices

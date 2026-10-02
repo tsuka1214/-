@@ -57,21 +57,42 @@ export function diffDays(date1: string, date2: string): number {
 }
 
 /**
- * Format timestamp into relative or friendly time (e.g. "10:32", "昨日 18:00")
+ * Format timestamp into relative or friendly time in JST (e.g. "10:32", "昨日 18:00")
  */
 export function formatTimestamp(timestamp: number): string {
   if (!timestamp) return '';
   const date = new Date(timestamp);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
   
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
+  // Use Intl to get parts in JST
+  const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  
+  const parts = jstFormatter.formatToParts(date);
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+  
+  const jstYear = getPart('year');
+  const jstMonth = getPart('month');
+  const jstDay = getPart('day');
+  const jstHours = getPart('hour');
+  const jstMinutes = getPart('minute');
+  
+  const now = new Date();
+  const nowJstParts = jstFormatter.formatToParts(now);
+  const getNowPart = (type: string) => nowJstParts.find(p => p.type === type)?.value || '';
+  
+  const isToday = jstYear === getNowPart('year') && jstMonth === getNowPart('month') && jstDay === getNowPart('day');
   
   if (isToday) {
-    return `${hours}:${minutes}`;
+    return `${jstHours}:${jstMinutes}`;
   }
-  return `${date.getMonth() + 1}/${date.getDate()} ${hours}:${minutes}`;
+  return `${parseInt(jstMonth, 10)}/${parseInt(jstDay, 10)} ${jstHours}:${jstMinutes}`;
 }
 
 /**
@@ -96,9 +117,41 @@ export function toYearMonthString(year: number, month: number): string {
 }
 
 /**
- * Format full date string YYYY-MM-DD
+ * Formats year, month, day into YYYY-MM-DD
  */
 export function toDateString(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Formats a Date or timestamp into JST string
+ */
+export function formatToJST(dateOrTimestamp: Date | number | undefined, format: 'full' | 'time' | 'date' = 'full'): string {
+  if (!dateOrTimestamp) return '';
+  const date = typeof dateOrTimestamp === 'number' ? new Date(dateOrTimestamp) : dateOrTimestamp;
+  
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: 'Asia/Tokyo',
+  };
+
+  if (format === 'full') {
+    options.year = 'numeric';
+    options.month = '2-digit';
+    options.day = '2-digit';
+    options.hour = '2-digit';
+    options.minute = '2-digit';
+    options.second = '2-digit';
+    options.hour12 = false;
+  } else if (format === 'time') {
+    options.hour = '2-digit';
+    options.minute = '2-digit';
+    options.hour12 = false;
+  } else if (format === 'date') {
+    options.year = 'numeric';
+    options.month = '2-digit';
+    options.day = '2-digit';
+  }
+
+  return new Intl.DateTimeFormat('ja-JP', options).format(date);
 }
 
