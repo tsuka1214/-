@@ -1,14 +1,38 @@
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
 /**
- * Returns today's date formatted as YYYY-MM-DD in local time
+ * Returns today's date formatted as YYYY-MM-DD in Japan Standard Time (JST)
  */
 export function getTodayString(): string {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = jstFormatter.formatToParts(now);
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+  return `${getPart('year')}-${getPart('month')}-${getPart('day')}`;
+}
+
+/**
+ * Returns current hours and minutes in Japan Standard Time (JST)
+ */
+export function getCurrentTimeJST(): { hours: number; minutes: number; timeStr: string } {
+  const now = new Date();
+  const jstFormatter = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  const parts = jstFormatter.formatToParts(now);
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value || '';
+  const hours = parseInt(getPart('hour'), 10);
+  const minutes = parseInt(getPart('minute'), 10);
+  const timeStr = `${getPart('hour')}:${getPart('minute')}`;
+  return { hours, minutes, timeStr };
 }
 
 /**

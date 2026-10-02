@@ -14,6 +14,7 @@ import {
   orderBy,
   limit,
   where,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
@@ -34,7 +35,7 @@ import {
   PackingListCategory,
   EventClothing,
 } from '../types';
-import { getTodayString } from '../utils/date';
+import { getTodayString, getCurrentTimeJST, formatTimestamp, formatToJST } from '../utils/date';
 import {
   DEFAULT_WEEKLY_SCHEDULE,
   resolveScheduleForDate,
@@ -940,16 +941,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const config = currentSettings.keyReminders;
       if (!config || !config.enabled) return;
 
-      const now = new Date();
-      const currentHours = now.getHours();
-      const currentMinutes = now.getMinutes();
-      const today = getTodayString();
+      const { hours: currentHours, minutes: currentMinutes, timeStr: currentTimeStr } = getCurrentTimeJST();
+      const today = getTodayString(); // JST YYYY-MM-DD
 
-      // 【要件3】深夜・早朝抑制（0:00〜06:00）
-      // ユーザーから22:10に送られないとの報告があったため、終了時間を23:59まで広げ、0-6時のみ抑制
+      // 【要件2】深夜・早朝抑制（0:00〜06:00 JST）
       if (currentHours >= 0 && currentHours < 6) {
-        if (now.getMinutes() % 60 === 0) {
-          console.log('[KeyReminder] 深夜・早朝(00-06時)のため催促をスキップしています');
+        if (currentMinutes % 60 === 0) {
+          console.log('[KeyReminder] JST深夜・早朝(00-06時)のため催促をスキップしています');
         }
         return;
       }
@@ -964,47 +962,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 催促開始時刻の決定
       let startTime = config.startTime || '18:00';
       
-      // 【追加要件】出欠確認がオンの日のみ催促する
       const resolvedSchedule = resolveScheduleForDate(today, currentSettings);
       if (config.onlyOnActiveDays && !resolvedSchedule.enabled) {
-        if (now.getMinutes() % 60 === 0) {
+        if (currentMinutes % 60 === 0) {
           console.log('[KeyReminder] 本日は出欠確認OFFのため、催促をスキップします');
         }
         return;
       }
       
-      // 【追加要件】まとめ通知と同じ時刻に催促を開始する設定の場合
       if (config.useSummaryTime && resolvedSchedule.enabled && resolvedSchedule.time) {
         startTime = resolvedSchedule.time;
       }
 
       const [startH, startM] = startTime.split(':').map(Number);
       if (isNaN(startH) || isNaN(startM)) {
-        console.warn('[KeyReminder] 開始時刻の形式が不正です:', startTime);
         return;
       }
       const startTotalMinutes = startH * 60 + startM;
       
-      // 開始時刻前なら何もしない
       if (nowTotalMinutes < startTotalMinutes) {
-        // 設定時刻まであと何分かたまにログ出し
-        if (now.getMinutes() % 30 === 0) {
-          console.log('[KeyReminder] 設定時刻まで待機中...', { startTime, currentTime: now.toLocaleTimeString() });
-        }
         return;
       }
 
-      // 【要件1】最新の施錠状況を直接Firestoreから取得して判定（キャッシュ遅延・誤判定防止）
+      // 【要件3】最新の施錠状況を直接Firestoreから取得して判定（キャッシュ遅延・誤判定防止）
       const fetchLatestKeyReported = async (keyId: KeyId): Promise<boolean> => {
         try {
           const sDoc = await getDoc(doc(db, 'key_status', keyId));
           if (sDoc.exists()) {
             const d = sDoc.data();
-            // 状態が 'closed' かつ、その更新日が今日であること
             if (d.status === 'closed' && d.updatedAt) {
+              // Convert updatedAt (timestamp) to JST date string
               const statusDate = new Date(d.updatedAt);
-              const statusDateStr = `${statusDate.getFullYear()}-${(statusDate.getMonth() + 1).toString().padStart(2, '0')}-${statusDate.getDate().toString().padStart(2, '0')}`;
-              return statusDateStr === today;
+              const jstDateStr = new Intl.DateTimeFormat('ja-JP', {
+                timeZone: 'Asia/Tokyo',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+              }).format(statusDate).replace(/\//g, '-');
+              
+              return jstDateStr === today;
             }
           }
         } catch (err) {
@@ -1016,23 +1012,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const key1Reported = await fetchLatestKeyReported('key1');
       const key2Reported = await fetchLatestKeyReported('key2');
 
-      // 【要件1】両方の鍵が報告済みなら絶対に催促を送らない（ループ停止）
       if (key1Reported && key2Reported) {
-        if (now.getMinutes() % 60 === 0) {
-          console.log('[KeyReminder] 全ての鍵が報告済みのため、本日の催促は送信しません');
-        }
         return;
       }
 
-      console.log('[KeyReminder] 鍵の未報告を検知。催促の条件判定を開始します', { 
-        key1: key1Reported ? '済' : '未', 
-        key2: key2Reported ? '済' : '未',
-        time: now.toLocaleTimeString()
-      });
-
       isReminderTriggeringRef.current = true;
       try {
-        // Firestoreの key_reminders ドキュメント（当日・統合）から送信状況を取得
         const reminderDocRef = doc(db, 'key_reminders', `${today}_unified`);
         const reminderSnap = await getDoc(reminderDocRef);
         let currentCount = 0;
@@ -1044,58 +1029,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           lastSentAt = Number(data.lastSentAt) || 0;
         }
 
-        // 【要件2】最大回数チェック
         const maxCount = config.maxCount || 3;
         if (currentCount >= maxCount) {
-          if (now.getMinutes() % 30 === 0) {
-            console.log('[KeyReminder] 最大催促回数に達しているため、本日の催促を停止しています', { currentCount, maxCount });
-          }
           isReminderTriggeringRef.current = false;
           return;
         }
 
-        // 【要件2】間隔チェック（厳密に待機時間を守る）
         const intervalMinutes = config.intervalMinutes || 15;
         const intervalMs = intervalMinutes * 60 * 1000;
         const timeSinceLastSent = Date.now() - lastSentAt;
         
-        if (currentCount > 0 && timeSinceLastSent < intervalMs - 10000) {
-          if (now.getMinutes() % 5 === 0) {
-            console.log('[KeyReminder] 次の催促（間隔待ち）まで待機中です', { 
-              currentCount, 
-              intervalMinutes,
-              remainingMinutes: Math.ceil((intervalMs - timeSinceLastSent) / 60000) 
-            });
-          }
+        if (currentCount > 0 && timeSinceLastSent < intervalMs - 5000) {
           isReminderTriggeringRef.current = false;
           return;
         }
 
-        // 催促メッセージの構築
         const nextCount = currentCount + 1;
 
-        // 【要件1】二重送信の防止（Firestoreでのロック）
-        // 複数デバイスや複数ドメイン(ai.studio vs vercel.app)での同時送信を防止
+        // 【要件1】二重送信の防止（Firestoreでの原子的なロック）
         const lockId = `${today}_keyrem_${nextCount}`;
         const lockDocRef = doc(db, 'notification_logs', lockId);
         
-        try {
-          const lockSnap = await getDoc(lockDocRef);
+        const lockSuccess = await runTransaction(db, async (transaction) => {
+          const lockSnap = await transaction.get(lockDocRef);
           if (lockSnap.exists()) {
-            console.log('[KeyReminder] 他のインスタンスで既に送信済みまたは処理中のためスキップします', { lockId });
-            isReminderTriggeringRef.current = false;
-            return;
+            return false;
           }
-          // ロックを取得（送信処理中として記録）
-          await setDoc(lockDocRef, {
+          transaction.set(lockDocRef, {
             type: 'key_reminder',
             date: today,
             count: nextCount,
             status: 'sending',
             startTime: Date.now(),
           });
-        } catch (lockErr) {
-          console.error('[KeyReminder] ロック取得エラー:', lockErr);
+          return true;
+        }).catch(() => false);
+
+        if (!lockSuccess) {
+          isReminderTriggeringRef.current = false;
+          return;
+        }
+
+        // 送信直前に再度報告状況をチェック（要件3）
+        const k1 = await fetchLatestKeyReported('key1');
+        const k2 = await fetchLatestKeyReported('key2');
+        if (k1 && k2) {
+          await updateDoc(lockDocRef, { status: 'cancelled_already_reported' });
           isReminderTriggeringRef.current = false;
           return;
         }
@@ -1104,86 +1083,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const key2Name = currentSettings.keyNames?.key2 || '鍵②';
         
         let targets = '';
-        if (!key1Reported && !key2Reported) {
+        if (!k1 && !k2) {
           targets = `${key1Name}と${key2Name}の両方`;
-        } else if (!key1Reported) {
+        } else if (!k1) {
           targets = `${key1Name}`;
         } else {
           targets = `${key2Name}`;
         }
 
         const notifTitle = `鍵の催促`;
-        const notifMessage = `【鍵の催促】${targets}がまだ閉められていません。${!key1Reported && !key2Reported ? '' : '閉めたら'}報告してください。（${nextCount}回目）`;
+        const notifMessage = `【鍵の催促】${targets}がまだ閉められていません。${!k1 && !k2 ? '' : '閉めたら'}報告してください。（${nextCount}回目）`;
 
-        console.log('[KeyReminder] 🔔 催促条件に一致。通知を送信します', {
-          count: nextCount,
-          targets,
-          currentTime: now.toLocaleTimeString()
-        });
+        console.log('[KeyReminder] 🔔 送信開始:', { count: nextCount, time: currentTimeStr });
 
-        // 1. Firestoreの管理ドキュメントを更新
         await setDoc(reminderDocRef, {
           date: today,
           count: nextCount,
           lastSentAt: Date.now(),
-          key1Reported,
-          key2Reported,
           updatedAt: Date.now(),
         }, { merge: true });
 
-        // 2. notificationsコレクションに追加 (アプリ内通知)
         if (isAppEnabled) {
-          await addDoc(collection(db, 'notifications'), {
-            title: notifTitle,
-            message: notifMessage,
-            type: 'reminder',
-            reminderCount: nextCount,
-            relatedDate: today,
-            createdAt: Date.now(),
-          });
-          showNativeNotification(notifTitle, notifMessage);
+          // 【要件1】同じ内容の通知が既に存在するか二重チェック
+          const existingNotifs = notificationsRef.current || [];
+          const isDuplicate = existingNotifs.some(n => 
+            n.type === 'reminder' && 
+            n.relatedDate === today && 
+            n.reminderCount === nextCount
+          );
+
+          if (!isDuplicate) {
+            await addDoc(collection(db, 'notifications'), {
+              title: notifTitle,
+              message: notifMessage,
+              type: 'reminder',
+              reminderCount: nextCount,
+              relatedDate: today,
+              createdAt: Date.now(),
+            });
+            showNativeNotification(notifTitle, notifMessage);
+          }
         }
 
-        // 4. LINE WORKSへの催促通知 (非同期・例外キャッチ)
         if (isLwEnabled && currentSettings.lineWorksKeyReminder?.enabled) {
           const lwConfig = currentSettings.lineWorksKeyReminder;
           if (lwConfig.clientId && lwConfig.privateKey && lwConfig.botId && lwConfig.channelId) {
-            console.log('[KeyReminder] LINE WORKSへ送信を試みます...');
             sendLineWorksNotification(lwConfig, notifMessage).then((res) => {
               let errorMsg = res.error;
               if (res.status === 404) {
                 errorMsg = 'Channel IDまたはBotの招待を確認してください (HTTP 404: NOT_FOUND)';
               }
-
               const status = {
                 success: res.success,
                 error: res.success ? undefined : errorMsg,
                 timestamp: Date.now(),
               };
               updateSettings({ lastLwKRStatus: status });
-              if (res.success) {
-                console.log('[KeyReminder] LINE WORKSへの送信に成功しました');
-              } else {
-                console.error('[KeyReminder] LINE WORKSへの送信に失敗しました:', errorMsg);
-              }
-            }).catch(err => {
-              console.error('[KeyReminder] LINE WORKS送信中に予期せぬエラー:', err);
-              updateSettings({
-                lastLwKRStatus: { success: false, error: err?.message || 'Unknown', timestamp: Date.now() }
-              });
-            });
-          } else {
-            console.warn('[KeyReminder] LINE WORKSの設定が不足しているため送信をスキップしました');
+            }).catch(() => {});
           }
         }
 
-        // 送信完了としてロックを更新
-        await updateDoc(lockDocRef, {
-          status: 'sent',
-          endTime: Date.now(),
-        }).catch(err => console.error('[KeyReminder] ロック更新エラー:', err));
+        await updateDoc(lockDocRef, { status: 'sent', endTime: Date.now() });
       } catch (err: any) {
-        console.error('[KeyReminder] 催促処理中に重大なエラーが発生しました:', err);
+        console.error('[KeyReminder] Error:', err);
       } finally {
         isReminderTriggeringRef.current = false;
       }
@@ -1865,15 +1827,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Group duplicates:
       // - For summary notifications: group by relatedDate (or date from createdAt)
-      // - For other notifications: group by date + type + title + message
+      // - For other notifications: group by date + type + title + message + reminderCount
       const groups = new Map<string, typeof items>();
       items.forEach((item) => {
         const dateKey =
           item.relatedDate ||
-          (item.createdAt ? new Date(item.createdAt).toISOString().slice(0, 10) : '');
+          (item.createdAt ? new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo' }).format(new Date(item.createdAt)).replace(/\//g, '-') : '');
         let groupKey = '';
         if (item.type === 'summary') {
           groupKey = `summary_${dateKey}`;
+        } else if (item.type === 'reminder' && (item as any).reminderCount !== undefined) {
+          groupKey = `reminder_${dateKey}_${(item as any).reminderCount}`;
         } else {
           groupKey = `${item.type}_${dateKey}_${item.title}_${item.message}`;
         }
@@ -2374,6 +2338,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteEvent,
     ]
   );
+
+  // 10. Auto-cleanup duplicates on load and periodically
+  useEffect(() => {
+    if (!isLoading) {
+      // 起動時と定期的に通知を整理する
+      cleanupDuplicateNotifications().catch(console.error);
+      const interval = setInterval(() => {
+        cleanupDuplicateNotifications().catch(console.error);
+      }, 1000 * 60 * 30); // 30分おき
+      return () => clearInterval(interval);
+    }
+  }, [isLoading]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

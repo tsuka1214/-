@@ -79,10 +79,12 @@ export const NotificationScreen: React.FC = () => {
     notifications.forEach((item) => {
       const dateKey =
         item.relatedDate ||
-        (item.createdAt ? new Date(item.createdAt).toISOString().slice(0, 10) : '');
+        (item.createdAt ? new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo' }).format(new Date(item.createdAt)).replace(/\//g, '-') : '');
       let groupKey = '';
       if (item.type === 'summary') {
         groupKey = `summary_${dateKey}`;
+      } else if (item.type === 'reminder' && (item as any).reminderCount !== undefined) {
+        groupKey = `reminder_${dateKey}_${(item as any).reminderCount}`;
       } else {
         groupKey = `${item.type}_${dateKey}_${item.title}_${(item.message || item.body || '').trim()}`;
       }
