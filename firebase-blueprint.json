@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "AttendanceRecord": {
+      "title": "Attendance Record",
+      "description": "Daily attendance report by club member",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "memberName": { "type": "string" },
+        "section": { "type": "string" },
+        "part": { "type": "string" },
+        "type": { "type": "string" },
+        "reason": { "type": "string" },
+        "time": { "type": "string" },
+        "authorDeviceToken": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["date", "memberName", "type", "createdAt"]
+    },
+    "EmergencyStampCard": {
+      "title": "Emergency Stamp Card",
+      "description": "Negative stamp card tracking emergency tardy occurrences, monthly counts, and self-set penalty games",
+      "type": "object",
+      "properties": {
+        "memberName": { "type": "string" },
+        "section": { "type": "string" },
+        "part": { "type": "string" },
+        "totalCount": { "type": "number" },
+        "monthlyCounts": { "type": "object" },
+        "penaltyGame": { "type": "string" },
+        "milestonesNotified": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["memberName", "totalCount", "updatedAt"]
+    },
+    "ClubMember": {
+      "title": "Club Member",
+      "description": "Registered member of the club",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "role": { "type": "string" },
+        "section": { "type": "string" },
+        "part": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["name"]
+    },
+    "NotificationItem": {
+      "title": "Notification Item",
+      "description": "App and broadcast notification item",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "body": { "type": "string" },
+        "type": { "type": "string" },
+        "relatedDate": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["title", "message", "type", "createdAt"]
+    },
+    "ClubEvent": {
+      "title": "Club Event",
+      "description": "Event like camps or concerts with packing lists and clothing specifications",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "location": { "type": "string" },
+        "gatheringTime": { "type": "string" },
+        "memo": { "type": "string" },
+        "clothing": {
+          "type": "object",
+          "properties": {
+            "gathering": { "type": "string" },
+            "practice": { "type": "string" },
+            "performance": { "type": "string" },
+            "sleeping": { "type": "string" }
+          }
+        },
+        "packingList": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": { "type": "string" },
+              "items": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "reminderEnabled": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["name", "startDate", "endDate", "createdAt"]
+    },
+    "NotificationRead": {
+      "title": "Notification Read",
+      "description": "User-specific read status for a notification",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "notificationId": { "type": "string" },
+        "readAt": { "type": "number" }
+      },
+      "required": ["userId", "notificationId", "readAt"]
+    },
+    "AppSettings": {
+      "title": "App Settings",
+      "description": "Global configuration for the club app",
+      "type": "object",
+      "properties": {
+        "clubName": { "type": "string" },
+        "adminPasscode": { "type": "string" },
+        "summaryNotificationTime": { "type": "string" },
+        "notificationsEnabled": { "type": "boolean" },
+        "penaltyStages": { "type": "array" },
+        "lineWorks": { "type": "object" },
+        "lineWorksKeyReminder": { "type": "object" },
+        "keyNames": { "type": "object" },
+        "keyReminders": { "type": "object" },
+        "keyResetAdminOnly": { "type": "boolean" },
+        "autoResetKeysAtMidnight": { "type": "boolean" },
+        "updatedAt": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/config/app_settings": {
+      "schema": "AppSettings",
+      "description": "Global application configuration document"
+    },
+    "/attendances/{attendanceId}": {
+      "schema": "AttendanceRecord",
+      "description": "Collection of daily attendance reports"
+    },
+    "/emergency_stamps/{memberDocId}": {
+      "schema": "EmergencyStampCard",
+      "description": "Collection of negative stamp cards for emergency tardy reports"
+    },
+    "/members/{memberId}": {
+      "schema": "ClubMember",
+      "description": "Collection of registered club members"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "NotificationItem",
+      "description": "Collection of notifications and alerts"
+    },
+    "/events/{eventId}": {
+      "schema": "ClubEvent",
+      "description": "Collection of club events with packing lists"
+    },
+    "/notification_reads/{readId}": {
+      "schema": "NotificationRead",
+      "description": "Collection of notification read statuses for individual users"
+    }
+  }
+}

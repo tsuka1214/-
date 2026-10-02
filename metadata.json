@@ -1,0 +1,6 @@
+{
+  "name": "部活動出欠連絡",
+  "description": "部活動の欠席・遅刻・早退・出席の連絡をリアルタイムに集約し、LINE WORKSのbot連携で当日の出席状況を自動通知するアプリ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

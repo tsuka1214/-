@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-%2E]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // App Settings
+    match /config/app_settings {
+      allow read: if true;
+      allow write: if isValidAppSettings(incoming());
+    }
+
+    function isValidAppSettings(data) {
+      return data.clubName is string && data.clubName.size() <= 100
+          && (data.adminPasscode == null || (data.adminPasscode is string && data.adminPasscode.size() <= 50))
+          && (data.summaryNotificationTime == null || (data.summaryNotificationTime is string && data.summaryNotificationTime.size() <= 5));
+    }
+
+    // Legacy path support (if any)
+    match /settings/config {
+      allow read, write: if true;
+    }
+
+    // Attendance Records
+    match /attendances/{attendanceId} {
+      allow read: if true;
+      allow create: if isValidAttendance(incoming());
+      allow update, delete: if true; // In production, restrict by deviceToken
+    }
+
+    function isValidAttendance(data) {
+      return data.date is string && data.date.size() == 10
+          && data.memberName is string && data.memberName.size() <= 50
+          && data.type is string
+          && data.createdAt is number;
+    }
+
+    // Members
+    match /members/{memberId} {
+      allow read: if true;
+      allow write: if true; // Restricted to admin in UI
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Events
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /notification_reads/{readId} {
+      allow read, write: if true;
+    }
+
+    // Other collections
+    match /key_status/{keyId} { allow read, write: if true; }
+    match /key_logs/{logId} { allow read, write: if true; }
+    match /emergency_stamps/{stampId} { allow read, write: if true; }
+    match /summary_logs/{logId} { allow read, write: if true; }
+    match /key_reminders/{remId} { allow read, write: if true; }
+  }
+}
