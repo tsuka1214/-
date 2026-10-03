@@ -100,10 +100,23 @@ export interface AppSettings {
   penaltyThreshold?: number; // 【旧】罰ゲーム執行に必要なスタンプ数 (デフォルト 3)
   penaltyStages?: PenaltyStage[]; // 【新】多段階罰ゲーム設定
   schedulePresets?: SchedulePreset[]; // 通知スケジュールのカスタムプリセット
+  lastLwStatus?: {
+    success: boolean;
+    error?: string;
+    timestamp: number;
+    statusCode?: number;
+  };
   lastLwKRStatus?: {
     success: boolean;
     error?: string;
     timestamp: number;
+    statusCode?: number;
+  };
+  lastLwEvStatus?: {
+    success: boolean;
+    error?: string;
+    timestamp: number;
+    statusCode?: number;
   };
 }
 

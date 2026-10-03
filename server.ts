@@ -49,35 +49,89 @@ async function startServer() {
     }
   });
 
+  // Endpoint to check if critical environment variables are set (without revealing values)
+  app.get('/api/lineworks/env-check', (_req, res) => {
+    const vars = [
+      'LINEWORKS_CLIENT_ID',
+      'LINEWORKS_CLIENT_SECRET',
+      'LINEWORKS_SERVICE_ACCOUNT',
+      'LINEWORKS_PRIVATE_KEY',
+      'LINEWORKS_BOT_ID',
+      'LINEWORKS_CHANNEL_ID',
+    ];
+    const status = vars.reduce((acc, v) => {
+      acc[v] = !!process.env[v] && process.env[v] !== '';
+      return acc;
+    }, {} as Record<string, boolean>);
+
+    res.json({
+      success: true,
+      envVarsStatus: status,
+      isProduction: process.env.NODE_ENV === 'production',
+      missingCritical: !process.env.LINEWORKS_CLIENT_ID || !process.env.LINEWORKS_CLIENT_SECRET || !process.env.LINEWORKS_PRIVATE_KEY
+    });
+  });
+
   // Unified LINE WORKS dispatch endpoint (supports API 2.0 and Webhook)
   app.post('/api/lineworks/dispatch', async (req, res) => {
     try {
-      const { mode, text, api2, webhookUrl } = req.body;
+      let { mode, text, api2, webhookUrl } = req.body;
 
       if (!text || typeof text !== 'string') {
         return res.status(400).json({ error: '送信テキストが空です' });
       }
 
       // Mode: API 2.0 (Free plan compatible official Bot API)
-      if (mode === 'api2' || (!mode && api2?.clientId && api2?.privateKey)) {
-        if (!api2?.clientId || !api2?.clientSecret || !api2?.serviceAccount || !api2?.privateKey || !api2?.botId) {
+      if (mode === 'api2' || (!mode && (api2?.clientId || process.env.LINEWORKS_CLIENT_ID))) {
+        // Fallback to environment variables if not provided in payload
+        const config = {
+          clientId: api2?.clientId || process.env.LINEWORKS_CLIENT_ID,
+          clientSecret: api2?.clientSecret || process.env.LINEWORKS_CLIENT_SECRET,
+          serviceAccount: api2?.serviceAccount || process.env.LINEWORKS_SERVICE_ACCOUNT,
+          privateKey: api2?.privateKey || process.env.LINEWORKS_PRIVATE_KEY,
+          botId: api2?.botId || process.env.LINEWORKS_BOT_ID,
+          channelId: api2?.channelId || process.env.LINEWORKS_CHANNEL_ID,
+          userId: api2?.userId,
+        };
+
+        const missing = [];
+        if (!config.clientId) missing.push('Client ID');
+        if (!config.clientSecret) missing.push('Client Secret');
+        if (!config.serviceAccount) missing.push('Service Account');
+        if (!config.privateKey) missing.push('Private Key');
+        if (!config.botId) missing.push('Bot ID');
+
+        if (missing.length > 0) {
           return res.status(400).json({
-            error: 'API 2.0 の必須情報（Client ID, Client Secret, Service Account, Private Key, Bot ID）が不足しています',
+            error: `API 2.0 の必須情報が不足しています: ${missing.join(', ')}。管理者設定または環境変数を確認してください。`,
           });
         }
 
-        if (!api2.channelId && !api2.userId) {
+        if (!config.channelId && !config.userId) {
           return res.status(400).json({
             error: '送信先となる「チャンネルID（トークルームID）」を指定してください',
           });
         }
 
-        await sendBotMessageApi2(api2, text);
+        try {
+          await sendBotMessageApi2(config as any, text);
+          return res.json({
+            success: true,
+            message: 'LINE WORKS Bot (API 2.0) 経由でメッセージを送信しました',
+          });
+        } catch (err: any) {
+          console.error('[LINE WORKS Dispatch] Send failed:', err.message);
+          
+          let statusCode = 400;
+          if (err.message.includes('401')) statusCode = 401;
+          else if (err.message.includes('404')) statusCode = 404;
+          else if (err.message.includes('403')) statusCode = 403;
 
-        return res.json({
-          success: true,
-          message: 'LINE WORKS Bot (API 2.0) 経由でメッセージを送信しました',
-        });
+          return res.status(statusCode).json({
+            error: err.message,
+            statusCode
+          });
+        }
       }
 
       // Mode: Incoming Webhook (Paid plan only)

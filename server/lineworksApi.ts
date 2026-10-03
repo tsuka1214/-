@@ -20,6 +20,7 @@ let cachedToken: {
  * Clean and normalize PEM private key format
  */
 function normalizePrivateKey(key: string): string {
+  if (!key) return '';
   let cleaned = key.trim();
   // If user pasted without headers or with escaped newlines
   cleaned = cleaned.replace(/\\n/g, '\n');
@@ -46,13 +47,22 @@ export async function getLineWorksAccessToken(config: {
     return cachedToken.accessToken;
   }
 
+  // Check if any critical config is missing
+  const missingFields = [];
+  if (!config.clientId) missingFields.push('Client ID');
+  if (!config.clientSecret) missingFields.push('Client Secret');
+  if (!config.serviceAccount) missingFields.push('Service Account');
+  if (!config.privateKey) missingFields.push('Private Key');
+
+  if (missingFields.length > 0) {
+    const msg = `アクセストークン取得に失敗：必須項目が不足しています (${missingFields.join(', ')})`;
+    console.error(`[LINE WORKS Auth] ${msg}`);
+    throw new Error(msg);
+  }
+
   const pemKey = normalizePrivateKey(config.privateKey);
 
   // 1. Sign JWT with RS256
-  // iss: client_id
-  // sub: service_account
-  // iat: current time
-  // exp: current time + 1 hour (max 3600)
   const payload = {
     iss: config.clientId.trim(),
     sub: config.serviceAccount.trim(),
@@ -66,11 +76,12 @@ export async function getLineWorksAccessToken(config: {
       algorithm: 'RS256',
     });
   } catch (err: any) {
-    throw new Error(`秘密鍵(Private Key)の署名に失敗しました。正しいPEM形式のRSA秘密鍵か確認してください: ${err?.message}`);
+    const msg = `秘密鍵(Private Key)の署名に失敗しました。正しいPEM形式のRSA秘密鍵か確認してください: ${err?.message}`;
+    console.error('[LINE WORKS Auth] JWT signing failed:', err?.message);
+    throw new Error(msg);
   }
 
   // 2. Request Access Token from LINE WORKS Token Endpoint (API 2.0)
-  // Standard Token URL: https://auth.worksmobile.com/oauth2/v2.0/token
   const tokenUrl = 'https://auth.worksmobile.com/oauth2/v2.0/token';
 
   const params = new URLSearchParams();
@@ -80,37 +91,48 @@ export async function getLineWorksAccessToken(config: {
   params.append('client_secret', config.clientSecret.trim());
   params.append('scope', 'bot,bot.message');
 
-  const res = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-    },
-    body: params.toString(),
-  });
-
-  const bodyText = await res.text();
-  let data: any;
   try {
-    data = JSON.parse(bodyText);
-  } catch {
-    throw new Error(`トークン取得レスポンスの解析に失敗しました: (HTTP ${res.status}) ${bodyText.slice(0, 200)}`);
-  }
+    console.log('[LINE WORKS Auth] トークン取得リクエスト開始...');
+    const res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      },
+      body: params.toString(),
+    });
 
-  if (!res.ok || !data.access_token) {
-    let errDesc = data.error_description || data.error || bodyText;
-    if (data.error === 'invalid_scope' || errDesc.includes('scope')) {
-      errDesc = `[権限エラー] Request scope is not valid. LINE WORKS Developer Console の「Service Account」設定で、このアプリに「bot」および「bot.message」のスコープが許可されているか確認してください。設定変更後は「保存」を忘れずに行ってください。`;
+    const bodyText = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      const msg = `トークン取得レスポンスの解析に失敗しました: (HTTP ${res.status}) ${bodyText.slice(0, 200)}`;
+      console.error(`[LINE WORKS Auth] Token response parse failed (HTTP ${res.status}):`, bodyText.slice(0, 200));
+      throw new Error(msg);
     }
-    throw new Error(`アクセストークンの取得に失敗しました (HTTP ${res.status}): ${errDesc}`);
+
+    if (!res.ok || !data.access_token) {
+      let errDesc = data.error_description || data.error || bodyText;
+      if (data.error === 'invalid_scope' || errDesc.includes('scope')) {
+        errDesc = `[権限エラー] Request scope is not valid. LINE WORKS Developer Console の「Service Account」設定で、このアプリに「bot」および「bot.message」のスコープが許可されているか確認してください。`;
+      }
+      const msg = `アクセストークンの取得に失敗しました (HTTP ${res.status}): ${errDesc}`;
+      console.error(`[LINE WORKS Auth] Token acquisition failed (HTTP ${res.status}):`, errDesc);
+      throw new Error(msg);
+    }
+
+    const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : 3600;
+    cachedToken = {
+      accessToken: data.access_token,
+      expiresAt: now + expiresIn,
+    };
+
+    console.log('[LINE WORKS Auth] トークン取得成功');
+    return data.access_token;
+  } catch (err: any) {
+    console.error('[LINE WORKS Auth] トークン取得失敗:', err.message);
+    throw err;
   }
-
-  const expiresIn = typeof data.expires_in === 'number' ? data.expires_in : 3600;
-  cachedToken = {
-    accessToken: data.access_token,
-    expiresAt: now + expiresIn,
-  };
-
-  return data.access_token;
 }
 
 /**

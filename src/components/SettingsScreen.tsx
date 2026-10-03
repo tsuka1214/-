@@ -101,6 +101,64 @@ const TimePulldown: React.FC<{
   );
 };
 
+const LastTransmissionStatus: React.FC<{
+  status?: { success: boolean; error?: string; timestamp: number; statusCode?: number };
+  botName: string;
+  onClear?: () => void;
+}> = ({ status, botName, onClear }) => {
+  if (!status) return null;
+
+  return (
+    <div className={`p-3 border rounded-xl text-xs flex items-start gap-2 relative ${
+      status.success 
+        ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300'
+        : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300'
+    }`}>
+      {status.success ? (
+        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+      ) : (
+        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+      )}
+      <div className="flex-1 pr-6">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-bold">{botName} の最終送信: {status.success ? '成功' : '失敗'}</span>
+          <span className="text-[10px] opacity-70 whitespace-nowrap">
+            {new Date(status.timestamp).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+          </span>
+        </div>
+        {!status.success && (
+          <div className="mt-1.5 space-y-1">
+            <p className="font-medium leading-relaxed">
+              {status.statusCode && <span className="font-bold mr-1">HTTP {status.statusCode}:</span>}
+              {status.error}
+            </p>
+            {status.statusCode === 404 && (
+              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100/50 dark:bg-amber-900/30 p-1 rounded border border-amber-200 dark:border-amber-800">
+                【対処法】Channel IDが正しいか、Botがトークルームに招待されているかを確認してください。
+              </p>
+            )}
+            {status.statusCode === 401 && (
+              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100/50 dark:bg-amber-900/30 p-1 rounded border border-amber-200 dark:border-amber-800">
+                【対処法】Client Secret または Private Key が正しいか確認してください。
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      {onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="absolute top-2 right-2 p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5 text-slate-400 transition-colors"
+          title="クリア"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 export const SettingsScreen: React.FC = () => {
   const {
     settings,
@@ -132,6 +190,25 @@ export const SettingsScreen: React.FC = () => {
     sendLineWorksKeyReminderTest,
     sendLineWorksEventReminderTest,
   } = useApp();
+
+  const [envVarsStatus, setEnvVarsStatus] = useState<Record<string, boolean>>({});
+  const [isProduction, setIsProduction] = useState(false);
+
+  useEffect(() => {
+    const checkEnv = async () => {
+      try {
+        const res = await fetch('/api/lineworks/env-check');
+        const data = await res.json();
+        if (data.success) {
+          setEnvVarsStatus(data.envVarsStatus);
+          setIsProduction(data.isProduction);
+        }
+      } catch (err) {
+        console.error('Failed to check environment variables:', err);
+      }
+    };
+    checkEnv();
+  }, []);
 
   // User profile state
   const [userNameInput, setUserNameInput] = useState(myMemberName);
@@ -784,23 +861,22 @@ export const SettingsScreen: React.FC = () => {
       if (res.success) {
         setLwKRTestResult({
           type: 'success',
-          message: 'LINE WORKSへテスト催促メッセージを送信しました！トークルームをご確認ください。',
+          message: '【トークン取得成功】LINE WORKSへテスト催促メッセージを送信しました！トークルームをご確認ください。',
         });
-        // Clear stale automation error if manual test succeeds
-        if (settings.lastLwKRStatus && !settings.lastLwKRStatus.success) {
-          updateSettings({ lastLwKRStatus: { success: true, timestamp: Date.now() } });
-        }
         setTimeout(() => setLwKRTestResult(null), 8000);
       } else {
+        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
         let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (errorMsg.includes('404')) {
-          errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        if (res.status === 404 || errorMsg.includes('404')) {
+          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        } else if (res.status === 401 || errorMsg.includes('401')) {
+          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
         } else if (errorMsg.includes('scope')) {
-          errorMsg = '[権限エラー] Request scope is not valid. LINE WORKS Developer Console で「bot」および「bot.message」のスコープが許可されているか確認してください。';
+          errorMsg = 'Request scope is not valid. LINE WORKS Developer Console で「bot」および「bot.message」のスコープが許可されているか確認してください。';
         }
         setLwKRTestResult({
           type: 'error',
-          message: errorMsg,
+          message: `【送信失敗】${statusDetail} ${errorMsg}`,
         });
       }
     } catch (err: any) {
@@ -936,19 +1012,22 @@ export const SettingsScreen: React.FC = () => {
       if (res.success) {
         setLwEvTestResult({
           type: 'success',
-          message: 'LINE WORKSへイベントテストメッセージを送信しました！トークルームをご確認ください。',
+          message: '【トークン取得成功】LINE WORKSへイベントテストメッセージを送信しました！トークルームをご確認ください。',
         });
         setTimeout(() => setLwEvTestResult(null), 8000);
       } else {
+        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
         let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (errorMsg.includes('404')) {
-          errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        if (res.status === 404 || errorMsg.includes('404')) {
+          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        } else if (res.status === 401 || errorMsg.includes('401')) {
+          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
         } else if (errorMsg.includes('scope')) {
-          errorMsg = `[権限エラー] Request scope is not valid. LINE WORKS Developer Console で、このアプリの Service Account に「bot」および「bot.message」のスコープが許可されているか確認してください。`;
+          errorMsg = `Request scope is not valid. LINE WORKS Developer Console で、このアプリの Service Account に「bot」および「bot.message」のスコープが許可されているか確認してください。`;
         }
         setLwEvTestResult({
           type: 'error',
-          message: errorMsg,
+          message: `【送信失敗】${statusDetail} ${errorMsg}`,
         });
       }
     } catch (err: any) {
@@ -1077,17 +1156,22 @@ export const SettingsScreen: React.FC = () => {
       if (res.success) {
         setLwTestResult({
           type: 'success',
-          message: 'LINE WORKSへ正常に本日の出欠サマリーを送信できました！トークルームをご確認ください。',
+          message: '【トークン取得成功】LINE WORKSへ正常に本日の出欠サマリーを送信できました！トークルームをご確認ください。',
         });
         setTimeout(() => setLwTestResult(null), 8000);
       } else {
+        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
         let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (errorMsg.includes('404')) {
-          errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        if (res.status === 404 || errorMsg.includes('404')) {
+          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
+        } else if (res.status === 401 || errorMsg.includes('401')) {
+          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
+        } else if (res.status === 403 || errorMsg.includes('scope')) {
+          errorMsg = 'Request scope is not valid. LINE WORKS Developer Console で「bot」および「bot.message」のスコープが許可されているか確認してください。';
         }
         setLwTestResult({
           type: 'error',
-          message: errorMsg,
+          message: `【送信失敗】${statusDetail} ${errorMsg}`,
         });
       }
     } catch (err: any) {
@@ -2139,7 +2223,56 @@ export const SettingsScreen: React.FC = () => {
             </div>
 
             {/* Quick action: One-tap copy & share for LINE WORKS */}
-            <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
+            <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-4 mb-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  環境変数の設定状況 (サーバー側)
+                </h4>
+                <span className="text-[10px] font-bold text-slate-400">
+                  {isProduction ? 'Production モード' : 'Development モード'}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  { key: 'LINEWORKS_CLIENT_ID', label: 'Client ID' },
+                  { key: 'LINEWORKS_CLIENT_SECRET', label: 'Client Secret' },
+                  { key: 'LINEWORKS_SERVICE_ACCOUNT', label: 'Service Account' },
+                  { key: 'LINEWORKS_PRIVATE_KEY', label: 'Private Key' },
+                  { key: 'LINEWORKS_BOT_ID', label: 'Bot ID' },
+                  { key: 'LINEWORKS_CHANNEL_ID', label: 'Channel ID (Default)' },
+                ].map((v) => (
+                  <div key={v.key} className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                    <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{v.label}</span>
+                    {envVarsStatus[v.key] ? (
+                      <span className="flex items-center gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="w-3 h-3" />
+                        設定済み
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[10px] font-bold text-slate-300 dark:text-slate-600">
+                        <X className="w-3 h-3" />
+                        未設定
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {Object.values(envVarsStatus).some(v => !v) && (
+                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-xl">
+                  <p className="text-[10px] font-bold text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    一部の環境変数が設定されていません。Vercel等の管理画面で設定するか、下の入力欄に直接入力して保存してください。
+                  </p>
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                ※ Vercel等の環境変数で設定されている場合、下の入力欄が空でもそちらが優先的に使用されます。
+              </p>
+            </div>
+
+            <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                   <Share2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -2164,6 +2297,15 @@ export const SettingsScreen: React.FC = () => {
                 <Copy className="w-3.5 h-3.5 text-emerald-600" />
                 本日の出欠テキストをクリップボードにコピー
               </button>
+            </div>
+
+            {/* Last Status Section */}
+            <div className="space-y-2">
+              <LastTransmissionStatus 
+                status={settings.lastLwStatus} 
+                botName="出欠連絡用" 
+                onClear={() => updateSettings({ lastLwStatus: undefined })}
+              />
             </div>
 
             {/* Save notification */}
@@ -2612,34 +2754,16 @@ export const SettingsScreen: React.FC = () => {
                   管理者専用
                 </span>
               </div>
+              
+              <LastTransmissionStatus 
+                status={settings.lastLwKRStatus} 
+                botName="鍵催促用" 
+                onClear={() => updateSettings({ lastLwKRStatus: undefined })}
+              />
+              
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                 出欠連絡用の連携とは別に、鍵の催促通知だけを別のトークルームやBotに送信したい場合に設定します。
               </p>
-
-              {settings.lastLwKRStatus && !settings.lastLwKRStatus.success && (
-                <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-800 dark:text-red-300 rounded-xl text-xs flex items-start gap-2 relative group">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <div className="space-y-1 pr-6">
-                    <p className="font-bold">自動催促の送信に失敗しました</p>
-                    <p className="opacity-90">{settings.lastLwKRStatus.error}</p>
-                    {settings.lastLwKRStatus.error?.includes('404') && (
-                      <p className="mt-1 font-bold text-amber-900 dark:text-amber-200 bg-amber-100/50 dark:bg-amber-900/30 p-1.5 rounded-lg border border-amber-300/50">
-                        【対処法】Channel IDが正しいか、Botがトークルームに招待されているかを確認してください。
-                      </p>
-                    )}
-                    <p className="text-[10px] opacity-70">
-                      最終失敗: {new Date(settings.lastLwKRStatus.timestamp).toLocaleString()}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => updateSettings({ lastLwKRStatus: { ...settings.lastLwKRStatus!, success: true } })}
-                    className="absolute top-2 right-2 p-1 rounded-full hover:bg-red-200 dark:hover:bg-red-800 text-red-400 hover:text-red-600 transition-colors"
-                    title="このエラーを消す"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
 
               {lwKRSettingsSaved && (
                 <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
@@ -2807,6 +2931,13 @@ export const SettingsScreen: React.FC = () => {
                   管理者専用
                 </span>
               </div>
+
+              <LastTransmissionStatus 
+                status={settings.lastLwEvStatus} 
+                botName="イベント用" 
+                onClear={() => updateSettings({ lastLwEvStatus: undefined })}
+              />
+
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                 出欠連絡用とは別のBotを使って、コンクールや本番等のイベントリマインドのみを別のトークルームに送信したい場合に設定します。
               </p>

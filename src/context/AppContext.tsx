@@ -103,9 +103,9 @@ interface AppContextType {
   clearAllNotifications: () => Promise<void>;
   cleanupDuplicateNotifications: () => Promise<{ removedCount: number }>;
   triggerManualSummary: (dateStr?: string, isForceManual?: boolean) => Promise<void>;
-  sendLineWorksTestSummary: (dateStr?: string) => Promise<{ success: boolean; error?: string }>;
-  sendLineWorksKeyReminderTest: () => Promise<{ success: boolean; error?: string }>;
-  sendLineWorksEventReminderTest: () => Promise<{ success: boolean; error?: string }>;
+  sendLineWorksTestSummary: (dateStr?: string) => Promise<{ success: boolean; error?: string; status?: number }>;
+  sendLineWorksKeyReminderTest: () => Promise<{ success: boolean; error?: string; status?: number }>;
+  sendLineWorksEventReminderTest: () => Promise<{ success: boolean; error?: string; status?: number }>;
   requestNotificationPermission: () => Promise<RequestPermissionResult>;
   hasNotificationPermission: boolean;
   notificationStatus: NotificationPermission | 'unsupported';
@@ -801,7 +801,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
                 if (lwConfig) {
                   const lwText = formatEventReminderMessage(currentSettings.clubName, event, daysBefore);
-                  sendLineWorksNotification(lwConfig, lwText).catch(err => console.error('Event reminder LW error:', err));
+                  sendLineWorksNotification(lwConfig, lwText).then(async (res) => {
+                    // Update last transmission status
+                    const settingsDocRef = doc(db, 'config', 'app_settings');
+                    await updateDoc(settingsDocRef, {
+                      lastLwEvStatus: {
+                        success: res.success,
+                        error: res.error || null,
+                        statusCode: res.status || null,
+                        timestamp: Date.now(),
+                      },
+                      updatedAt: Date.now(),
+                    }).catch(console.error);
+
+                    if (!res.success) {
+                      console.warn('Event reminder LW error:', res.error);
+                    }
+                  }).catch(err => console.error('Event reminder LW error:', err));
                 }
               }
             }
@@ -1128,17 +1144,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (isLwEnabled && currentSettings.lineWorksKeyReminder?.enabled) {
           const lwConfig = currentSettings.lineWorksKeyReminder;
           if (lwConfig.clientId && lwConfig.privateKey && lwConfig.botId && lwConfig.channelId) {
-            sendLineWorksNotification(lwConfig, notifMessage).then((res) => {
+            sendLineWorksNotification(lwConfig, notifMessage).then(async (res) => {
               let errorMsg = res.error;
               if (res.status === 404) {
                 errorMsg = 'Channel IDまたはBotの招待を確認してください (HTTP 404: NOT_FOUND)';
               }
-              const status = {
-                success: res.success,
-                error: res.success ? undefined : errorMsg,
-                timestamp: Date.now(),
-              };
-              updateSettings({ lastLwKRStatus: status });
+              const settingsDocRef = doc(db, 'config', 'app_settings');
+              await updateDoc(settingsDocRef, {
+                lastLwKRStatus: {
+                  success: res.success,
+                  error: res.success ? undefined : errorMsg,
+                  statusCode: res.status || null,
+                  timestamp: Date.now(),
+                },
+                updatedAt: Date.now(),
+              }).catch(console.error);
             }).catch(() => {});
           }
         }
@@ -1628,7 +1648,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
           showNativeNotification(notifTitle, formattedAlertMessage);
 
-          // LINE WORKS への即時遅刻・緊急遽刻通知
+            // LINE WORKS への即時遅刻・緊急遽刻通知
           if (
             settings.lineWorks?.enabled &&
             settings.lineWorks.sendTardyAlert &&
@@ -1643,7 +1663,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               resolvedPart,
               true // isEmergency is always true here
             );
-            sendLineWorksNotification(settings.lineWorks, lwEmergencyText).catch(console.error);
+            sendLineWorksNotification(settings.lineWorks, lwEmergencyText).then(async (res) => {
+              // Update last transmission status
+              const settingsDocRef = doc(db, 'config', 'app_settings');
+              await updateDoc(settingsDocRef, {
+                lastLwStatus: {
+                  success: res.success,
+                  error: res.error || null,
+                  statusCode: res.status || null,
+                  timestamp: Date.now(),
+                },
+                updatedAt: Date.now(),
+              }).catch(console.error);
+
+              if (!res.success) {
+                console.warn('LINE WORKS emergency alert dispatch warning:', res.error);
+              }
+            }).catch(console.error);
           }
         }
       }
@@ -2035,7 +2071,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         summaryAttendances,
         summaryMembers
       );
-      sendLineWorksNotification(currentSettings.lineWorks, lwSummaryMsg).then((res) => {
+      sendLineWorksNotification(currentSettings.lineWorks, lwSummaryMsg).then(async (res) => {
+        // Update last transmission status
+        const settingsDocRef = doc(db, 'config', 'app_settings');
+        await updateDoc(settingsDocRef, {
+          lastLwStatus: {
+            success: res.success,
+            error: res.error || null,
+            statusCode: res.status || null,
+            timestamp: Date.now(),
+          },
+          updatedAt: Date.now(),
+        }).catch(console.error);
+
         if (!res.success) {
           console.warn('LINE WORKS summary dispatch warning:', res.error);
         }
@@ -2073,6 +2121,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const result = await sendLineWorksNotification(currentSettings.lineWorks, lwSummaryMsg);
+    
+    // Update last transmission status
+    const settingsDocRef = doc(db, 'config', 'app_settings');
+    await updateDoc(settingsDocRef, {
+      lastLwStatus: {
+        success: result.success,
+        error: result.error || null,
+        statusCode: result.status || null,
+        timestamp: Date.now(),
+      },
+      updatedAt: Date.now(),
+    }).catch(console.error);
+
     return result;
   };
 
@@ -2082,24 +2143,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!currentSettings.lineWorksKeyReminder) {
       return { success: false, error: '設定がありません' };
     }
-    return sendLineWorksNotification(currentSettings.lineWorksKeyReminder, text);
+    const result = await sendLineWorksNotification(currentSettings.lineWorksKeyReminder, text);
+
+    // Update last transmission status
+    const settingsDocRef = doc(db, 'config', 'app_settings');
+    await updateDoc(settingsDocRef, {
+      lastLwKRStatus: {
+        success: result.success,
+        error: result.error || null,
+        statusCode: result.status || null,
+        timestamp: Date.now(),
+      },
+      updatedAt: Date.now(),
+    }).catch(console.error);
+
+    return result;
   };
 
   const sendLineWorksEventReminderTest = async (): Promise<{ success: boolean; error?: string }> => {
     const text = '【イベント通知テスト】これはイベントリマインダー用LINE WORKS連携のテスト送信です。正常に届いています。';
     const currentSettings = settingsRef.current;
     
+    let result: { success: boolean; error?: string; status?: number };
+    
     // currentSettings.lineWorksEvents を優先使用
     if (currentSettings.lineWorksEvents?.enabled) {
-      return sendLineWorksNotification(currentSettings.lineWorksEvents, text);
-    }
-    
-    // 設定がない場合は通常の lineWorks 連携を使用
-    if (currentSettings.lineWorks?.enabled && currentSettings.lineWorks.sendEventReminder !== false) {
-      return sendLineWorksNotification(currentSettings.lineWorks, text);
+      result = await sendLineWorksNotification(currentSettings.lineWorksEvents, text);
+    } else if (currentSettings.lineWorks?.enabled && currentSettings.lineWorks.sendEventReminder !== false) {
+      // 設定がない場合は通常の lineWorks 連携を使用
+      result = await sendLineWorksNotification(currentSettings.lineWorks, text);
+    } else {
+      return { success: false, error: 'イベント通知用のLINE WORKS連携設定が有効になっていません。' };
     }
 
-    return { success: false, error: 'イベント通知用のLINE WORKS連携設定が有効になっていません。' };
+    // Update last transmission status
+    const settingsDocRef = doc(db, 'config', 'app_settings');
+    await updateDoc(settingsDocRef, {
+      lastLwEvStatus: {
+        success: result.success,
+        error: result.error || null,
+        statusCode: result.status || null,
+        timestamp: Date.now(),
+      },
+      updatedAt: Date.now(),
+    }).catch(console.error);
+
+    return result;
   };
 
   // Action: 鍵の施錠報告（2鍵対応: key1 または key2）
