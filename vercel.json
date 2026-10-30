@@ -1,0 +1,18 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/key-reminder",
+      "schedule": "0 11 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/((?!api/|sw\\.js|manifest\\.json|favicon|assets/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

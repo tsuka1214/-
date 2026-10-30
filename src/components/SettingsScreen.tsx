@@ -1,168 +1,57 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   User,
   Shield,
-  Clock,
-  Bell,
   Key,
-  Users,
-  Plus,
-  Trash2,
-  CheckCircle2,
-  AlertCircle,
-  LogOut,
-  Lock,
-  RotateCcw,
-  ChevronDown,
-  ChevronUp,
-  X,
-  MessageSquare,
+  BellRing,
   Bot,
   Send,
-  HelpCircle,
   Check,
+  CheckCircle2,
+  AlertCircle,
+  Users,
+  Trash2,
+  Plus,
   KeyRound,
-  Share2,
-  Copy,
-  ExternalLink,
-  Sun,
-  Moon,
-  Monitor,
-  Smartphone,
-  Download,
-  CheckCircle,
-  Globe,
+  Activity,
+  Zap,
   Sparkles,
-  BellRing,
-  Trophy,
+  Sliders,
+  RefreshCw,
+  Megaphone,
+  CalendarCheck,
+  CalendarDays,
+  Clock,
+  Lock,
+  RotateCcw,
+  Server,
 } from 'lucide-react';
-import { KeyId, PenaltyStage } from '../types';
-import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
-import { sendLocalNotification } from '../utils/notification';
-import { verifyLineWorksApi2Auth, formatDailySummaryMessage } from '../utils/lineworks';
-import { getTodayString, formatJapaneseDate } from '../utils/date';
-import { usePwaInstall } from '../hooks/usePwaInstall';
-import { SECTION_CATEGORIES, SECTION_PARTS_MAP, SectionCategory } from '../constants/parts';
-import { NotificationScheduleManager } from './NotificationScheduleManager';
-import { PatternManagerModal } from './PatternManagerModal';
-import { NotificationGuideModal } from './NotificationGuideModal';
-import { useAttendancePatterns } from '../hooks/useAttendancePatterns';
+import { WeeklyScheduleDay } from '../types';
 import {
-  DAYS_OF_WEEK_META,
   DEFAULT_WEEKLY_SCHEDULE,
+  DAY_NAMES,
+  DAY_FULL_NAMES,
   resolveScheduleForDate,
 } from '../constants/schedule';
-
-const TimePulldown: React.FC<{
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}> = ({ value, onChange, disabled }) => {
-  const [hour, minute] = (value || '08:00').split(':');
-
-  const handleHourChange = (newHour: string) => {
-    onChange(`${newHour}:${minute}`);
-  };
-
-  const handleMinuteChange = (newMinute: string) => {
-    onChange(`${hour}:${newMinute}`);
-  };
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <select
-        value={hour}
-        onChange={(e) => handleHourChange(e.target.value)}
-        disabled={disabled}
-        className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium appearance-none disabled:opacity-40"
-      >
-        {Array.from({ length: 24 }).map((_, i) => (
-          <option key={i} value={String(i).padStart(2, '0')}>
-            {String(i).padStart(2, '0')}時
-          </option>
-        ))}
-      </select>
-      <span className="font-bold text-slate-400">:</span>
-      <select
-        value={minute}
-        onChange={(e) => handleMinuteChange(e.target.value)}
-        disabled={disabled}
-        className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium appearance-none disabled:opacity-40"
-      >
-        {Array.from({ length: 60 }).map((_, i) => (
-          <option key={i} value={String(i).padStart(2, '0')}>
-            {String(i).padStart(2, '0')}分
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-};
-
-const LastTransmissionStatus: React.FC<{
-  status?: { success: boolean; error?: string; timestamp: number; statusCode?: number };
-  botName: string;
-  onClear?: () => void;
-}> = ({ status, botName, onClear }) => {
-  if (!status) return null;
-
-  return (
-    <div className={`p-3 border rounded-xl text-xs flex items-start gap-2 relative ${
-      status.success 
-        ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300'
-        : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300'
-    }`}>
-      {status.success ? (
-        <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-      ) : (
-        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
-      )}
-      <div className="flex-1 pr-6">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-bold">{botName} の最終送信: {status.success ? '成功' : '失敗'}</span>
-          <span className="text-[10px] opacity-70 whitespace-nowrap">
-            {new Date(status.timestamp).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-          </span>
-        </div>
-        {!status.success && (
-          <div className="mt-1.5 space-y-1">
-            <p className="font-medium leading-relaxed">
-              {status.statusCode && <span className="font-bold mr-1">HTTP {status.statusCode}:</span>}
-              {status.error}
-            </p>
-            {status.statusCode === 404 && (
-              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100/50 dark:bg-amber-900/30 p-1 rounded border border-amber-200 dark:border-amber-800">
-                【対処法】Channel IDが正しいか、Botがトークルームに招待されているかを確認してください。
-              </p>
-            )}
-            {status.statusCode === 401 && (
-              <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100/50 dark:bg-amber-900/30 p-1 rounded border border-amber-200 dark:border-amber-800">
-                【対処法】Client Secret または Private Key が正しいか確認してください。
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-      {onClear && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="absolute top-2 right-2 p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/5 text-slate-400 transition-colors"
-          title="クリア"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
-    </div>
-  );
-};
+import { getTodayString, formatJapaneseDate, formatTimestamp } from '../utils/date';
+import { SECTIONS_AND_PARTS, getPartsForSection } from '../constants/parts';
+import {
+  verifyLineWorksApi2Auth,
+  sendLineWorksNotification,
+  fetchLineWorksConfigFromFirestore,
+  saveLineWorksConfigToFirestore,
+  resolveEffectiveLineWorksConfig,
+  type LineWorksVerifyResult,
+} from '../utils/lineworks';
+import { LineWorksMultiBotSettings } from './LineWorksMultiBotSettings';
+import { AttendancePatternsEditor } from './AttendancePatternsEditor';
 
 export const SettingsScreen: React.FC = () => {
   const {
     settings,
     updateSettings,
+    saveLineWorksSettings,
     isAdmin,
     loginAdmin,
     logoutAdmin,
@@ -173,170 +62,501 @@ export const SettingsScreen: React.FC = () => {
     myMemberName,
     myMemberSection,
     myMemberPart,
-    setMyMemberName,
     setMyMemberProfile,
-    sendLineWorksTestSummary,
-    attendances,
-    hasNotificationPermission,
-    notificationStatus,
-    isInIframe,
-    requestNotificationPermission,
-    sendTestNotification,
-    themeMode,
-    setThemeMode,
-    isDark,
-    triggerSplashScreen,
-    triggerTutorial,
+    cleanupKeyReportData,
+    keyReminderDebug,
+    forceCheckKeyReminders,
     sendLineWorksKeyReminderTest,
+    sendLineWorksKeyReportTest,
     sendLineWorksEventReminderTest,
+    sendLineWorksTestSummary,
+    sendBroadcastNotification,
   } = useApp();
 
-  const [envVarsStatus, setEnvVarsStatus] = useState<Record<string, boolean>>({});
-  const [isProduction, setIsProduction] = useState(false);
+  // User Profile
+  const getSafeUserName = (raw?: string) => {
+    if (!raw || raw === '部員' || raw === '齋藤凌吾' || raw === '名前未登録' || !raw.trim()) {
+      return '今江司';
+    }
+    return raw.trim();
+  };
+
+  const [userNameInput, setUserNameInput] = useState<string>(() => getSafeUserName(myMemberName));
+  const [userSectionInput, setUserSectionInput] = useState<string>(myMemberSection || '木管');
+  const [userPartInput, setUserPartInput] = useState<string>(myMemberPart || 'サックス');
+  const [profileSaved, setProfileSaved] = useState<boolean>(false);
+
+  // 鍵報告クリーンアップ
+  const [isCleaningUp, setIsCleaningUp] = useState<boolean>(false);
+  const [cleanupResultMsg, setCleanupResultMsg] = useState<string | null>(null);
+
+  // 施錠報告 LINE WORKS テスト送信
+  const [keyReportTesting, setKeyReportTesting] = useState<boolean>(false);
+  const [keyReportTestMsg, setKeyReportTestMsg] = useState<{ success: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    const checkEnv = async () => {
-      try {
-        const res = await fetch('/api/lineworks/env-check');
-        const data = await res.json();
-        if (data.success) {
-          setEnvVarsStatus(data.envVarsStatus);
-          setIsProduction(data.isProduction);
-        }
-      } catch (err) {
-        console.error('Failed to check environment variables:', err);
-      }
-    };
-    checkEnv();
-  }, []);
-
-  // User profile state
-  const [userNameInput, setUserNameInput] = useState(myMemberName);
-  const [userSectionInput, setUserSectionInput] = useState<string>(myMemberSection || '');
-  const [userPartInput, setUserPartInput] = useState<string>(myMemberPart || '');
-  const [userNameSaved, setUserNameSaved] = useState(false);
-
-  // Sync state if myMemberName/Section/Part changes
-  useEffect(() => {
-    setUserNameInput(myMemberName);
-    setUserSectionInput(myMemberSection || '');
-    setUserPartInput(myMemberPart || '');
+    setUserNameInput(getSafeUserName(myMemberName));
+    setUserSectionInput(myMemberSection || '木管');
+    setUserPartInput(myMemberPart || 'サックス');
   }, [myMemberName, myMemberSection, myMemberPart]);
 
-  // Attendance patterns
-  const { patterns, savePatterns } = useAttendancePatterns();
-  const [isPatternModalOpen, setIsPatternModalOpen] = useState(false);
+  // Admin Auth
+  const [passcodeAttempt, setPasscodeAttempt] = useState<string>('');
+  const [passcodeError, setPasscodeError] = useState<string>('');
+  const [newPasscodeInput, setNewPasscodeInput] = useState<string>('');
+  const [passcodeChangeMsg, setPasscodeChangeMsg] = useState<string | null>(null);
 
-  // PWA & Google Play state
-  const { isInstallable, isInstalled, isIOS, promptInstall } = usePwaInstall();
-  const [copiedAppUrl, setCopiedAppUrl] = useState(false);
-  const [showPlayGuide, setShowPlayGuide] = useState(false);
-  const [showPwaGuide, setShowPwaGuide] = useState(false);
+  // General Settings
+  const [clubName, setClubName] = useState<string>(settings.clubName || '吹奏楽部');
+  const [autoResetKeys, setAutoResetKeys] = useState<boolean>(settings.autoResetKeysAtMidnight !== false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
-  // Push notification state for Settings screen
-  const [isRequestingNotif, setIsRequestingNotif] = useState(false);
-  const [isSendingLocalNotifTest, setIsSendingLocalNotifTest] = useState(false);
-  const [notifGuideOpen, setNotifGuideOpen] = useState(false);
-  const [notifGuideReason, setNotifGuideReason] = useState<
-    'iframe' | 'denied' | 'unsupported' | 'dismissed' | 'error' | null
-  >(null);
-  const [notifToast, setNotifToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Attendance Confirmation & Daily Summary Schedule Settings (出欠確認・配信スケジュール時間設定)
+  const [summaryNotificationTime, setSummaryNotificationTime] = useState<string>(
+    settings.summaryNotificationTime || '13:40'
+  );
+  const [weeklySchedule, setWeeklySchedule] = useState<Record<number, WeeklyScheduleDay>>(
+    settings.weeklyNotificationSchedule || DEFAULT_WEEKLY_SCHEDULE
+  );
+  const [scheduleSavedMsg, setScheduleSavedMsg] = useState<string | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState<boolean>(false);
 
-  const handleRequestNotifClick = async () => {
-    setIsRequestingNotif(true);
-    setNotifToast(null);
+  const todayDateStr = getTodayString();
+  const todayResolvedSchedule = resolveScheduleForDate(todayDateStr, settings);
+  const currentDayOfWeek = new Date().getDay();
+
+  // Broadcast Notification (全体通知・一斉送信)
+  const [broadcastTitle, setBroadcastTitle] = useState<string>('');
+  const [broadcastMessage, setBroadcastMessage] = useState<string>('');
+  const [broadcastSendToLw, setBroadcastSendToLw] = useState<boolean>(true);
+  const [broadcastSending, setBroadcastSending] = useState<boolean>(false);
+  const isBroadcastSendingRef = useRef<boolean>(false);
+  const [broadcastSuccessMsg, setBroadcastSuccessMsg] = useState<string | null>(null);
+  const [broadcastErrorMsg, setBroadcastErrorMsg] = useState<string | null>(null);
+
+  // Manual Daily Summary Send (日報まとめ手動送信)
+  const [summarySending, setSummarySending] = useState<boolean>(false);
+  const isSummarySendingRef = useRef<boolean>(false);
+  const [summarySuccessMsg, setSummarySuccessMsg] = useState<string | null>(null);
+  const [summaryErrorMsg, setSummaryErrorMsg] = useState<string | null>(null);
+
+  // Event Notification (イベント通知リマインダー)
+  const [evReminderEnabled, setEvReminderEnabled] = useState<boolean>(settings.lineWorksEvents?.enabled ?? true);
+  const [evTesting, setEvTesting] = useState<boolean>(false);
+  const [evTestSuccessMsg, setEvTestSuccessMsg] = useState<string | null>(null);
+  const [evTestErrorMsg, setEvTestErrorMsg] = useState<string | null>(null);
+
+  // Key Names
+  const [key1NameInput, setKey1NameInput] = useState<string>(settings.keyNames?.key1 || '鍵①');
+  const [key2NameInput, setKey2NameInput] = useState<string>(settings.keyNames?.key2 || '鍵②');
+  const [keyNamesSaved, setKeyNamesSaved] = useState<boolean>(false);
+
+  // Key Reminders Settings
+  const [keyReminderEnabled, setKeyReminderEnabled] = useState<boolean>(settings.keyReminders?.enabled ?? false);
+  const [keyReminderStartTime, setKeyReminderStartTime] = useState<string>(settings.keyReminders?.startTime || '18:00');
+  const [keyReminderInterval, setKeyReminderInterval] = useState<number>(settings.keyReminders?.intervalMinutes || 15);
+  const [keyReminderMaxCount, setKeyReminderMaxCount] = useState<number>(settings.keyReminders?.maxCount || 3);
+  const [keyReminderOnlyActiveDays, setKeyReminderOnlyActiveDays] = useState<boolean>(settings.keyReminders?.onlyOnActiveDays ?? false);
+  const [keyReminderUseSummaryTime, setKeyReminderUseSummaryTime] = useState<boolean>(settings.keyReminders?.useSummaryTime ?? false);
+  const [keyReminderAppNotif, setKeyReminderAppNotif] = useState<boolean>(settings.keyReminders?.appNotificationEnabled !== false);
+  const [keyReminderLwNotif, setKeyReminderLwNotif] = useState<boolean>(settings.keyReminders?.lineWorksNotificationEnabled ?? false);
+  const [keyReminderMidnightSuppression, setKeyReminderMidnightSuppression] = useState<boolean>(settings.keyReminders?.midnightSuppressionEnabled !== false);
+  const [keyRemindersSaved, setKeyRemindersSaved] = useState<boolean>(false);
+  const [testReminderToast, setTestReminderToast] = useState<string | null>(null);
+
+  // LINE WORKS
+  const [lwEnabled, setLwEnabled] = useState<boolean>(settings.lineWorks?.enabled ?? false);
+  const [lwMode, setLwMode] = useState<'webhook' | 'api2'>(settings.lineWorks?.mode || 'webhook');
+  const [lwWebhookUrl, setLwWebhookUrl] = useState<string>(settings.lineWorks?.webhookUrl || '');
+  const [lwClientId, setLwClientId] = useState<string>(settings.lineWorks?.clientId || '');
+  const [lwClientSecret, setLwClientSecret] = useState<string>(settings.lineWorks?.clientSecret || '');
+  const [lwServiceAccount, setLwServiceAccount] = useState<string>(settings.lineWorks?.serviceAccount || '');
+  const [lwPrivateKey, setLwPrivateKey] = useState<string>(settings.lineWorks?.privateKey || '');
+  const [lwBotId, setLwBotId] = useState<string>(settings.lineWorks?.botId || '');
+  const [lwChannelId, setLwChannelId] = useState<string>(settings.lineWorks?.channelId || '');
+  const [lwSendSummary, setLwSendSummary] = useState<boolean>(settings.lineWorks?.sendDailySummary !== false);
+  const [lwSendTardy, setLwSendTardy] = useState<boolean>(settings.lineWorks?.sendTardyAlert !== false);
+  const [lwServerId, setLwServerId] = useState<string>(settings.lineWorks?.serverId || '40170745');
+
+  // LINE WORKS Verification and Test States
+  const [lwVerifying, setLwVerifying] = useState<boolean>(false);
+  const [lwVerifyResult, setLwVerifyResult] = useState<LineWorksVerifyResult | null>(null);
+  const [lwSaved, setLwSaved] = useState<boolean>(false);
+  const [lwTestingSend, setLwTestingSend] = useState<boolean>(false);
+  const [lwTestSuccessMsg, setLwTestSuccessMsg] = useState<string | null>(null);
+  const [lwTestErrorMsg, setLwTestErrorMsg] = useState<string | null>(null);
+
+  // Members Form
+  const [newMemberName, setNewMemberName] = useState<string>('');
+  const [newMemberGrade, setNewMemberGrade] = useState<string>('1年');
+  const [newMemberSection, setNewMemberSection] = useState<string>('木管');
+  const [newMemberPart, setNewMemberPart] = useState<string>('フルート/ピッコロ');
+
+  // PWA Cache Management
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
+
+  const handleForceClearCache = async () => {
+    setIsClearingCache(true);
     try {
-      const res = await requestNotificationPermission();
-      if (res.success) {
-        setNotifToast({
-          type: 'success',
-          text: 'プッシュ通知が許可されました！確認テスト通知を送信しました。',
-        });
-        setTimeout(() => setNotifToast(null), 4000);
-      } else {
-        setNotifGuideReason(res.reason || (res.isInIframe ? 'iframe' : 'error'));
-        setNotifGuideOpen(true);
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
       }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          if (reg.active) {
+            reg.active.postMessage({ type: 'CLEAR_CACHE' });
+          }
+          await reg.update().catch(() => {});
+        }
+      }
+      try {
+        sessionStorage.setItem('sw_just_reloaded', '1');
+      } catch {
+        // ignore
+      }
+      window.location.reload();
     } catch {
-      setNotifGuideReason('error');
-      setNotifGuideOpen(true);
-    } finally {
-      setIsRequestingNotif(false);
+      window.location.reload();
     }
   };
 
-  const handleSendTestNotifClick = async () => {
-    setIsSendingLocalNotifTest(true);
+  // 【重要: 要件1】アプリ起動時およびFirestore更新時に、保存された設定値を確実に同期・復元
+  useEffect(() => {
+    if (settings.keyReminders) {
+      setKeyReminderEnabled(settings.keyReminders.enabled ?? false);
+      if (settings.keyReminders.startTime) setKeyReminderStartTime(settings.keyReminders.startTime);
+      if (settings.keyReminders.intervalMinutes) setKeyReminderInterval(settings.keyReminders.intervalMinutes);
+      if (settings.keyReminders.maxCount) setKeyReminderMaxCount(settings.keyReminders.maxCount);
+      setKeyReminderOnlyActiveDays(settings.keyReminders.onlyOnActiveDays ?? false);
+      setKeyReminderUseSummaryTime(settings.keyReminders.useSummaryTime ?? false);
+      setKeyReminderAppNotif(settings.keyReminders.appNotificationEnabled !== false);
+      setKeyReminderLwNotif(settings.keyReminders.lineWorksNotificationEnabled ?? false);
+      setKeyReminderMidnightSuppression(settings.keyReminders.midnightSuppressionEnabled !== false);
+    }
+    if (settings.keyNames) {
+      setKey1NameInput(settings.keyNames.key1 || '鍵①');
+      setKey2NameInput(settings.keyNames.key2 || '鍵②');
+    }
+    if (settings.clubName) setClubName(settings.clubName);
+    if (settings.summaryNotificationTime) setSummaryNotificationTime(settings.summaryNotificationTime);
+    if (settings.weeklyNotificationSchedule) setWeeklySchedule(settings.weeklyNotificationSchedule);
+    if (settings.autoResetKeysAtMidnight !== undefined) setAutoResetKeys(settings.autoResetKeysAtMidnight);
+    if (settings.lineWorksEvents?.enabled !== undefined) {
+      setEvReminderEnabled(settings.lineWorksEvents.enabled);
+    } else if (settings.lineWorks?.sendEventReminder !== undefined) {
+      setEvReminderEnabled(settings.lineWorks.sendEventReminder);
+    }
+
+    // LINE WORKS設定の同期
+    if (settings.lineWorks) {
+      setLwEnabled(settings.lineWorks.enabled ?? false);
+      setLwMode(settings.lineWorks.mode || 'webhook');
+      setLwWebhookUrl(settings.lineWorks.webhookUrl || '');
+      setLwClientId(settings.lineWorks.clientId || '');
+      setLwClientSecret(settings.lineWorks.clientSecret || '');
+      setLwServiceAccount(settings.lineWorks.serviceAccount || '');
+      setLwPrivateKey(settings.lineWorks.privateKey || '');
+      setLwBotId(settings.lineWorks.botId || '');
+      setLwChannelId(settings.lineWorks.channelId || '');
+      setLwServerId(settings.lineWorks.serverId || '40170745');
+      setLwSendSummary(settings.lineWorks.sendDailySummary !== false);
+      setLwSendTardy(settings.lineWorks.sendTardyAlert !== false);
+    }
+  }, [settings]);
+
+  // 管理者ログイン時にFirestoreの専用ドキュメント settings/lineworks より最新設定を直接取得
+  useEffect(() => {
+    if (isAdmin) {
+      fetchLineWorksConfigFromFirestore().then((firestoreCfg) => {
+        if (firestoreCfg) {
+          if (firestoreCfg.clientId !== undefined) setLwClientId(firestoreCfg.clientId);
+          if (firestoreCfg.clientSecret !== undefined) setLwClientSecret(firestoreCfg.clientSecret);
+          if (firestoreCfg.serviceAccount !== undefined) setLwServiceAccount(firestoreCfg.serviceAccount);
+          if (firestoreCfg.privateKey !== undefined) setLwPrivateKey(firestoreCfg.privateKey);
+          if (firestoreCfg.botId !== undefined) setLwBotId(firestoreCfg.botId);
+          if (firestoreCfg.channelId !== undefined) setLwChannelId(firestoreCfg.channelId);
+          if (firestoreCfg.serverId !== undefined) setLwServerId(firestoreCfg.serverId || '40170745');
+          if (firestoreCfg.enabled !== undefined) setLwEnabled(firestoreCfg.enabled);
+          if (firestoreCfg.mode !== undefined) setLwMode(firestoreCfg.mode);
+          if (firestoreCfg.webhookUrl !== undefined) setLwWebhookUrl(firestoreCfg.webhookUrl);
+          if (firestoreCfg.sendDailySummary !== undefined) setLwSendSummary(firestoreCfg.sendDailySummary);
+          if (firestoreCfg.sendTardyAlert !== undefined) setLwSendTardy(firestoreCfg.sendTardyAlert);
+        }
+      }).catch((err) => {
+        console.warn('Firestore settings/lineworks 取得時エラー:', err);
+      });
+    }
+  }, [isAdmin]);
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (userNameInput.trim()) {
+      setMyMemberProfile(userNameInput.trim(), userSectionInput, userPartInput);
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2500);
+    }
+  };
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasscodeError('');
+    const success = loginAdmin(passcodeAttempt);
+    if (success) {
+      setPasscodeAttempt('');
+    } else {
+      setPasscodeError('合言葉が違います');
+    }
+  };
+
+  const handleSaveGeneral = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
     try {
-      const res = await sendTestNotification();
+      await updateSettings({
+        clubName: clubName.trim() || '吹奏楽部',
+        summaryNotificationTime,
+        autoResetKeysAtMidnight: autoResetKeys,
+      });
+      setSaveSuccessMsg('全体設定を保存しました');
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleWeeklyDayChange = (dayIndex: number, field: keyof WeeklyScheduleDay, val: any) => {
+    setWeeklySchedule((prev) => ({
+      ...prev,
+      [dayIndex]: {
+        ...(prev[dayIndex] || DEFAULT_WEEKLY_SCHEDULE[dayIndex] || { enabled: true, time: '18:00', label: '放課後練習' }),
+        [field]: val,
+      },
+    }));
+  };
+
+  const handleApplyBaseTimeToAllDays = () => {
+    setWeeklySchedule((prev) => {
+      const next: Record<number, WeeklyScheduleDay> = {};
+      for (let i = 0; i <= 6; i++) {
+        const cur = prev[i] || DEFAULT_WEEKLY_SCHEDULE[i] || { enabled: i !== 0, time: summaryNotificationTime };
+        next[i] = {
+          ...cur,
+          time: summaryNotificationTime,
+        };
+      }
+      return next;
+    });
+  };
+
+  const handleResetWeeklyScheduleToDefault = () => {
+    setWeeklySchedule(DEFAULT_WEEKLY_SCHEDULE);
+  };
+
+  const handleSaveSchedule = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setScheduleSaving(true);
+    try {
+      // 基本時刻が設定された場合、未カスタマイズの曜日にも反映
+      const updatedSchedule: Record<number, WeeklyScheduleDay> = {};
+      for (let i = 0; i <= 6; i++) {
+        const cur = weeklySchedule[i] || DEFAULT_WEEKLY_SCHEDULE[i];
+        updatedSchedule[i] = {
+          ...cur,
+          time: cur.time && cur.time !== '18:00' ? cur.time : summaryNotificationTime,
+        };
+      }
+
+      await updateSettings({
+        summaryNotificationTime,
+        weeklyNotificationSchedule: updatedSchedule,
+        autoAttendance: {
+          enabled: false,
+          mode: 'on_app_open',
+        },
+      });
+      setScheduleSavedMsg('出欠確認・配信スケジュール設定（時間設定）を保存しました！');
+      setTimeout(() => setScheduleSavedMsg(null), 3500);
+    } catch (err: any) {
+      alert(`保存に失敗しました: ${err.message}`);
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const handleChangePasscode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPasscodeInput.trim()) return;
+    try {
+      await updateSettings({ adminPasscode: newPasscodeInput.trim() });
+      setPasscodeChangeMsg('管理者合言葉を変更しました');
+      setNewPasscodeInput('');
+      setTimeout(() => setPasscodeChangeMsg(null), 3000);
+    } catch (err: any) {
+      alert(`合言葉の変更に失敗しました: ${err.message}`);
+    }
+  };
+
+  // 全体通知の一斉送信（連打・多重送信を完全に防止）
+  const handleSendBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBroadcastSendingRef.current || broadcastSending) {
+      console.warn('[Broadcast] 一斉送信が現在進行中のため、多重クリックをブロックしました');
+      return;
+    }
+
+    const cleanTitle = broadcastTitle.trim();
+    const cleanMessage = broadcastMessage.trim();
+    if (!cleanTitle || !cleanMessage) return;
+
+    isBroadcastSendingRef.current = true;
+    setBroadcastSending(true);
+    setBroadcastSuccessMsg(null);
+    setBroadcastErrorMsg(null);
+
+    try {
+      console.log(`[Broadcast] 🚀 全体通知一斉送信を開始: title="${cleanTitle}", sendToLw=${broadcastSendToLw}`);
+      const res = await sendBroadcastNotification(
+        cleanTitle,
+        cleanMessage,
+        broadcastSendToLw
+      );
       if (res.success) {
-        setNotifToast({
-          type: 'success',
-          text: '端末にテスト通知を送信しました！',
+        setBroadcastSuccessMsg(
+          res.lwSent
+            ? '全体通知を部員全員（アプリ内）およびLINE WORKSへ一斉送信しました！'
+            : '全体通知を部員全員へ送信しました（通知一覧に登録完了）。'
+        );
+        setBroadcastTitle('');
+        setBroadcastMessage('');
+        setTimeout(() => setBroadcastSuccessMsg(null), 5000);
+        console.log('[Broadcast] ✅ 全体通知一斉送信が正常に完了しました');
+      } else {
+        setBroadcastErrorMsg(res.error || '送信に失敗しました');
+        console.error('[Broadcast] ❌ 全体通知一斉送信失敗:', res.error);
+      }
+    } catch (err: any) {
+      console.error('[Broadcast] ❌ 全体通知例外エラー:', err);
+      setBroadcastErrorMsg(err.message || '送信エラーが発生しました');
+    } finally {
+      isBroadcastSendingRef.current = false;
+      setBroadcastSending(false);
+    }
+  };
+
+  // 日報まとめ手動送信（連打防止ガード付き）
+  const handleSendManualSummary = async () => {
+    if (isSummarySendingRef.current || summarySending) {
+      console.warn('[DailySummary] 日報送信が現在進行中のため多重クリックをブロックしました');
+      return;
+    }
+
+    isSummarySendingRef.current = true;
+    setSummarySending(true);
+    setSummarySuccessMsg(null);
+    setSummaryErrorMsg(null);
+
+    try {
+      console.log('[DailySummary] 🚀 日報まとめ（出欠集計）の手動即時配信を開始...');
+      const res = await sendLineWorksTestSummary();
+      if (res.success) {
+        setSummarySuccessMsg('本日の出欠集計（日報）をLINE WORKSへ送信しました！');
+        setTimeout(() => setSummarySuccessMsg(null), 5000);
+        console.log('[DailySummary] ✅ 日報まとめの手動送信完了');
+      } else {
+        setSummaryErrorMsg(res.error || '送信に失敗しました。LINE WORKS連携がONか確認してください。');
+        console.error('[DailySummary] ❌ 日報まとめ送信失敗:', res.error);
+      }
+    } catch (err: any) {
+      console.error('[DailySummary] ❌ 日報まとめ例外エラー:', err);
+      setSummaryErrorMsg(err.message || '送信エラーが発生しました');
+    } finally {
+      isSummarySendingRef.current = false;
+      setSummarySending(false);
+    }
+  };
+
+  // 鍵の報告履歴クリーンアップ（デバッグ・データ是正用）
+  const handleCleanupKeyReports = async () => {
+    setIsCleaningUp(true);
+    setCleanupResultMsg(null);
+    try {
+      const res = await cleanupKeyReportData();
+      setCleanupResultMsg(res.message);
+      setTimeout(() => setCleanupResultMsg(null), 6000);
+    } catch (err: any) {
+      alert(`クリーンアップに失敗しました: ${err.message}`);
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  // 施錠報告 LINE WORKS テスト送信
+  const handleSendKeyReportTest = async () => {
+    setKeyReportTesting(true);
+    setKeyReportTestMsg(null);
+    try {
+      const res = await sendLineWorksKeyReportTest();
+      if (res.success) {
+        setKeyReportTestMsg({
+          success: true,
+          text: '施錠報告のLINE WORKSテスト送信に成功しました！トークルームをご確認ください。',
         });
       } else {
-        setNotifToast({
-          type: 'error',
-          text: res.error || 'テスト通知の送信に失敗しました',
+        setKeyReportTestMsg({
+          success: false,
+          text: res.error || '施錠報告のLINE WORKS送信に失敗しました',
         });
       }
-      setTimeout(() => setNotifToast(null), 3500);
+      setTimeout(() => setKeyReportTestMsg(null), 6000);
+    } catch (err: any) {
+      setKeyReportTestMsg({ success: false, text: `送信エラー: ${err.message}` });
     } finally {
-      setIsSendingLocalNotifTest(false);
+      setKeyReportTesting(false);
     }
   };
 
-  // Admin login states
-  const [passcodeAttempt, setPasscodeAttempt] = useState('');
-  const [passcodeError, setPasscodeError] = useState('');
-  const [showAdminSection, setShowAdminSection] = useState(false);
+  // イベント通知テスト送信
+  const handleSendEventReminderTest = async () => {
+    setEvTesting(true);
+    setEvTestSuccessMsg(null);
+    setEvTestErrorMsg(null);
+    try {
+      const res = await sendLineWorksEventReminderTest();
+      if (res.success) {
+        setEvTestSuccessMsg('イベント通知のテスト送信に成功しました！トークルームをご確認ください。');
+        setTimeout(() => setEvTestSuccessMsg(null), 5000);
+      } else {
+        setEvTestErrorMsg(res.error || '送信に失敗しました。LINE WORKS連携をONにしてからお試しください。');
+      }
+    } catch (err: any) {
+      setEvTestErrorMsg(err.message || '送信エラー');
+    } finally {
+      setEvTesting(false);
+    }
+  };
 
-  // Admin settings states
-  const [notificationTime, setNotificationTime] = useState(
-    settings?.summaryNotificationTime || ''
-  );
-  const [notificationsEnabled, setNotificationsEnabled] = useState(
-    settings?.notificationsEnabled ?? true
-  );
-  const [clubName, setClubName] = useState(settings?.clubName || '部活動');
-  const [penaltyStages, setPenaltyStages] = useState<PenaltyStage[]>(
-    settings?.penaltyStages || []
-  );
-  const [settingsSaved, setSettingsSaved] = useState(false);
-  const [settingsError, setSettingsError] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Passcode change states
-  const [newPasscode, setNewPasscode] = useState('');
-  const [confirmPasscode, setConfirmPasscode] = useState('');
-  const [passcodeSuccess, setPasscodeSuccess] = useState('');
-  const [passcodeChangeError, setPasscodeChangeError] = useState('');
-
-  // Key names settings states (2鍵対応)
-  const [key1NameInput, setKey1NameInput] = useState(settings.keyNames?.key1 || '鍵①');
-  const [key2NameInput, setKey2NameInput] = useState(settings.keyNames?.key2 || '鍵②');
-  const [keyNamesSaved, setKeyNamesSaved] = useState(false);
-
-  useEffect(() => {
-    setKey1NameInput(settings?.keyNames?.key1 || '鍵①');
-    setKey2NameInput(settings?.keyNames?.key2 || '鍵②');
-  }, [settings?.keyNames]);
-
-  useEffect(() => {
-    setNotificationTime(settings?.summaryNotificationTime || '');
-    setNotificationsEnabled(settings?.notificationsEnabled ?? true);
-    setClubName(settings?.clubName || '部活動');
-    setPenaltyStages(settings?.penaltyStages || []);
-  }, [
-    settings?.summaryNotificationTime,
-    settings?.notificationsEnabled,
-    settings?.clubName,
-    settings?.penaltyStages,
-  ]);
+  // イベント通知設定の保存
+  const handleSaveEventReminder = async () => {
+    setIsSaving(true);
+    try {
+      await updateSettings({
+        lineWorksEvents: {
+          ...(settings.lineWorksEvents || settings.lineWorks || { enabled: true, mode: 'api2' }),
+          enabled: evReminderEnabled,
+        },
+      });
+      setEvTestSuccessMsg('イベント通知設定を保存しました');
+      setTimeout(() => setEvTestSuccessMsg(null), 3000);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleSaveKeyNames = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSettingsError('');
     setIsSaving(true);
     try {
       await updateSettings({
@@ -347,1835 +567,694 @@ export const SettingsScreen: React.FC = () => {
       });
       setKeyNamesSaved(true);
       setTimeout(() => setKeyNamesSaved(false), 3000);
-    } catch (err) {
-      setSettingsError('鍵名の保存に失敗しました。');
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Key reminder settings states (鍵の催促通知設定)
-  const [keyReminderEnabled, setKeyReminderEnabled] = useState(
-    settings?.keyReminders?.enabled ?? false
-  );
-  const [keyAppEnabled, setKeyAppEnabled] = useState(
-    settings?.keyReminders?.appNotificationEnabled ?? true
-  );
-  const [keyLwEnabled, setKeyLwEnabled] = useState(
-    settings?.keyReminders?.lineWorksNotificationEnabled ?? false
-  );
-  const [keyReminderStartTime, setKeyReminderStartTime] = useState(
-    settings?.keyReminders?.startTime || '18:00'
-  );
-  const [keyReminderInterval, setKeyReminderInterval] = useState(
-    settings?.keyReminders?.intervalMinutes || 15
-  );
-  const [keyReminderMaxCount, setKeyReminderMaxCount] = useState(
-    settings?.keyReminders?.maxCount || 3
-  );
-  const [keyReminderOnlyActiveDays, setKeyReminderOnlyActiveDays] = useState(
-    settings?.keyReminders?.onlyOnActiveDays ?? false
-  );
-  const [keyReminderUseSummaryTime, setKeyReminderUseSummaryTime] = useState(
-    settings?.keyReminders?.useSummaryTime ?? false
-  );
-
-  const [keyResetAdminOnly, setKeyResetAdminOnly] = useState(
-    settings?.keyResetAdminOnly ?? false
-  );
-  const [autoResetKeysAtMidnight, setAutoResetKeysAtMidnight] = useState(
-    settings?.autoResetKeysAtMidnight ?? true
-  );
-
-  useEffect(() => {
-    setKeyResetAdminOnly(settings?.keyResetAdminOnly ?? false);
-    setAutoResetKeysAtMidnight(settings?.autoResetKeysAtMidnight ?? true);
-  }, [settings?.keyResetAdminOnly, settings?.autoResetKeysAtMidnight]);
-
-  const [keyRemindersSaved, setKeyRemindersSaved] = useState(false);
-  const [testReminderToast, setTestReminderToast] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (settings.keyReminders) {
-      setKeyReminderEnabled(settings.keyReminders.enabled ?? false);
-      setKeyAppEnabled(settings.keyReminders.appNotificationEnabled ?? true);
-      setKeyLwEnabled(settings.keyReminders.lineWorksNotificationEnabled ?? false);
-      setKeyReminderStartTime(settings.keyReminders.startTime || '18:00');
-      setKeyReminderInterval(settings.keyReminders.intervalMinutes || 15);
-      setKeyReminderMaxCount(settings.keyReminders.maxCount || 3);
-      setKeyReminderOnlyActiveDays(settings.keyReminders.onlyOnActiveDays ?? false);
-      setKeyReminderUseSummaryTime(settings.keyReminders.useSummaryTime ?? false);
-    }
-  }, [settings.keyReminders]);
-
-  const handleSaveKeyReminders = async (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('[Settings] 鍵催促設定の保存処理を開始します');
-    setSettingsError('');
-    setKeyRemindersSaved(false);
-    setIsSaving(true);
-
+  // 【重要: 要件1 & 2】スイッチ変更時に即座にFirestore/AppContextへ保存・同期するハンドラー
+  const handleToggleKeyReminder = async (checked: boolean) => {
+    setKeyReminderEnabled(checked);
     try {
-      const today = getTodayString();
-      const reminderDocRef = doc(db, 'key_reminders', `${today}_unified`);
-      
-      // 1. 過去の通知抑制のためのリセット（失敗しても設定保存は継続するが、ログは出す）
-      try {
-        console.log(`[Settings] 過去の通知抑制のため最終送信時刻をリセット中... (日付: ${today})`);
-        await setDoc(reminderDocRef, {
-          date: today,
-          lastSentAt: Date.now(),
-          updatedAt: Date.now(),
-        }, { merge: true });
-        console.log('[Settings] 最終送信時刻のリセットに成功しました');
-      } catch (resetErr: any) {
-        console.warn('[Settings] 最終送信時刻のリセットに失敗しました（設定保存は続行します）:', resetErr);
-      }
-
-      // 2. 設定の保存
-      console.log('[Settings] Firestoreに催促設定を書き込み中...');
       await updateSettings({
         keyReminders: {
-          enabled: keyReminderEnabled,
-          appNotificationEnabled: keyAppEnabled,
-          lineWorksNotificationEnabled: keyLwEnabled,
-          startTime: keyReminderStartTime || '18:00',
-          intervalMinutes: Number(keyReminderInterval) || 15,
-          maxCount: Number(keyReminderMaxCount) || 3,
-          onlyOnActiveDays: keyReminderOnlyActiveDays,
-          useSummaryTime: keyReminderUseSummaryTime,
+          ...(settings.keyReminders || {}),
+          enabled: checked,
+          startTime: keyReminderStartTime,
+          intervalMinutes: Number(keyReminderInterval),
+          maxCount: Number(keyReminderMaxCount),
+          onlyOnActiveDays: Boolean(keyReminderOnlyActiveDays),
+          useSummaryTime: Boolean(keyReminderUseSummaryTime),
+          appNotificationEnabled: Boolean(keyReminderAppNotif),
+          lineWorksNotificationEnabled: Boolean(keyReminderLwNotif),
+          midnightSuppressionEnabled: Boolean(keyReminderMidnightSuppression),
         },
-        keyResetAdminOnly,
-        autoResetKeysAtMidnight,
       });
-      
-      console.log('[Settings] 鍵催促設定の保存が完了しました');
+      setKeyRemindersSaved(true);
+      setTimeout(() => setKeyRemindersSaved(false), 2500);
+    } catch (err) {
+      console.error('Failed to auto-sync key reminder switch:', err);
+    }
+  };
+
+  // 【重要: 要件1】鍵催促設定の保存（スイッチの状態を確実にFirestoreへ保存）
+  const handleSaveKeyReminders = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      const updatedKeyReminders = {
+        enabled: Boolean(keyReminderEnabled), // 確実にbooleanで保存
+        startTime: keyReminderStartTime,
+        intervalMinutes: Number(keyReminderInterval),
+        maxCount: Number(keyReminderMaxCount),
+        onlyOnActiveDays: Boolean(keyReminderOnlyActiveDays),
+        useSummaryTime: Boolean(keyReminderUseSummaryTime),
+        appNotificationEnabled: Boolean(keyReminderAppNotif),
+        lineWorksNotificationEnabled: Boolean(keyReminderLwNotif),
+        midnightSuppressionEnabled: Boolean(keyReminderMidnightSuppression),
+      };
+
+      await updateSettings({
+        keyReminders: updatedKeyReminders,
+      });
+
       setKeyRemindersSaved(true);
       setTimeout(() => setKeyRemindersSaved(false), 3000);
-    } catch (err: any) {
-      console.error('[Settings] 鍵催促設定の保存中に重大なエラーが発生しました:', err);
-      setSettingsError(`保存に失敗しました: ${err.message || '不明なエラー'}`);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleSendTestKeyReminder = async () => {
-    const key1Name = settings.keyNames?.key1 || '鍵①';
-    const key2Name = settings.keyNames?.key2 || '鍵②';
-    const testTitle = `鍵の催促`;
-    const testMessage = `【鍵の催促】${key1Name}と${key2Name}の両方がまだ閉められていません。報告してください。（テスト送信・1回目）`;
-
     try {
-      await addDoc(collection(db, 'notifications'), {
-        title: testTitle,
-        message: testMessage,
-        type: 'reminder',
-        reminderCount: 1,
-        relatedDate: getTodayString(),
-        createdAt: Date.now(),
-      });
-
-      const res = await sendLocalNotification(testTitle, { body: testMessage });
-      
-      if (res.success) {
-        setTestReminderToast(`テスト催促通知を送信しました！通知画面や端末で確認できます。`);
-      } else {
-        setTestReminderToast(`通知の送信に失敗しました: ${res.error || '不明なエラー'}`);
-      }
+      await forceCheckKeyReminders({ isTest: true });
+      setTestReminderToast('テスト催促通知を送信しました！通知画面や端末で確認できます。');
       setTimeout(() => setTestReminderToast(null), 4000);
     } catch (err: any) {
-      console.error('Failed to send test key reminder:', err);
-      setTestReminderToast(`Firestoreへの登録に失敗しました: ${err.message || '不明なエラー'}`);
+      setTestReminderToast(`テスト送信エラー: ${err.message}`);
       setTimeout(() => setTestReminderToast(null), 4000);
     }
   };
 
-  // Member management states
-  const [newMemberName, setNewMemberName] = useState('');
-  const [newMemberGrade, setNewMemberGrade] = useState('');
-  const [newMemberRole, setNewMemberRole] = useState('部員');
-  const [newMemberSection, setNewMemberSection] = useState<string>('');
-  const [newMemberPart, setNewMemberPart] = useState<string>('');
-  const [memberError, setMemberError] = useState('');
-
-  // LINE WORKS states
-  const [lwMode, setLwMode] = useState<'api2' | 'webhook'>(settings.lineWorks?.mode || (settings.lineWorks?.webhookUrl ? 'webhook' : 'api2'));
-  const [lwEnabled, setLwEnabled] = useState(settings.lineWorks?.enabled ?? false);
-  const [lwWebhookUrl, setLwWebhookUrl] = useState(settings.lineWorks?.webhookUrl || '');
-  const [lwBotName, setLwBotName] = useState(settings.lineWorks?.botName || '部活出欠bot');
-  const [lwSendSummary, setLwSendSummary] = useState(settings.lineWorks?.sendDailySummary ?? true);
-  const [lwSendTardy, setLwSendTardy] = useState(settings.lineWorks?.sendTardyAlert ?? true);
-  const [lwSendEventReminder, setLwSendEventReminder] = useState(settings.lineWorks?.sendEventReminder ?? true);
-  
-  // LINE WORKS API 2.0 credentials
-  const [lwClientId, setLwClientId] = useState(settings.lineWorks?.clientId || '');
-  const [lwClientSecret, setLwClientSecret] = useState(settings.lineWorks?.clientSecret || '');
-  const [lwServiceAccount, setLwServiceAccount] = useState(settings.lineWorks?.serviceAccount || '');
-  const [lwPrivateKey, setLwPrivateKey] = useState(settings.lineWorks?.privateKey || '');
-  const [lwBotId, setLwBotId] = useState(settings.lineWorks?.botId || '');
-  const [lwChannelId, setLwChannelId] = useState(settings.lineWorks?.channelId || '');
-
-  // LINE WORKS Key Reminder states
-  const [lwKRClientId, setLwKRClientId] = useState(settings.lineWorksKeyReminder?.clientId || '');
-  const [lwKRClientSecret, setLwKRClientSecret] = useState(settings.lineWorksKeyReminder?.clientSecret || '');
-  const [lwKRServiceAccount, setLwKRServiceAccount] = useState(settings.lineWorksKeyReminder?.serviceAccount || '');
-  const [lwKRPrivateKey, setLwKRPrivateKey] = useState(settings.lineWorksKeyReminder?.privateKey || '');
-  const [lwKRBotId, setLwKRBotId] = useState(settings.lineWorksKeyReminder?.botId || '');
-  const [lwKRChannelId, setLwKRChannelId] = useState(settings.lineWorksKeyReminder?.channelId || '');
-  const [lwKRSettingsSaved, setLwKRSettingsSaved] = useState(false);
-  const [lwKRTesting, setLwKRTesting] = useState(false);
-  const [lwKRVerifyingAuth, setLwKRVerifyingAuth] = useState(false);
-  const [lwKRTestResult, setLwKRTestResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-  // LINE WORKS Events states
-  const [lwEvEnabled, setLwEvEnabled] = useState(settings.lineWorksEvents?.enabled ?? false);
-  const [lwEvClientId, setLwEvClientId] = useState(settings.lineWorksEvents?.clientId || '');
-  const [lwEvClientSecret, setLwEvClientSecret] = useState(settings.lineWorksEvents?.clientSecret || '');
-  const [lwEvServiceAccount, setLwEvServiceAccount] = useState(settings.lineWorksEvents?.serviceAccount || '');
-  const [lwEvPrivateKey, setLwEvPrivateKey] = useState(settings.lineWorksEvents?.privateKey || '');
-  const [lwEvBotId, setLwEvBotId] = useState(settings.lineWorksEvents?.botId || '');
-  const [lwEvChannelId, setLwEvChannelId] = useState(settings.lineWorksEvents?.channelId || '');
-  const [lwEvSettingsSaved, setLwEvSettingsSaved] = useState(false);
-  const [lwEvTesting, setLwEvTesting] = useState(false);
-  const [lwEvVerifyingAuth, setLwEvVerifyingAuth] = useState(false);
-  const [lwEvTestResult, setLwEvTestResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-  // Auto Attendance states
-  const [autoAttEnabled, setAutoAttEnabled] = useState(settings?.autoAttendance?.enabled ?? false);
-  const [autoAttMode, setAutoAttMode] = useState<'on_app_open' | 'at_specific_time'>(settings?.autoAttendance?.mode || 'on_app_open');
-  const [autoAttTime, setAutoAttTime] = useState(settings?.autoAttendance?.time || '08:30');
-  const [autoAttSaved, setAutoAttSaved] = useState(false);
-
-  const [lwSettingsSaved, setLwSettingsSaved] = useState(false);
-  const [lwTesting, setLwTesting] = useState(false);
-  const [lwVerifyingAuth, setLwVerifyingAuth] = useState(false);
-  const [lwTestResult, setLwTestResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [showLwGuide, setShowLwGuide] = useState(false);
-  const [copiedSummary, setCopiedSummary] = useState(false);
-
-  // Sync state if settings change from Firestore
-  useEffect(() => {
-    if (settings.lineWorks) {
-      setLwMode(settings.lineWorks.mode || (settings.lineWorks.webhookUrl ? 'webhook' : 'api2'));
-      setLwEnabled(settings.lineWorks.enabled ?? false);
-      setLwWebhookUrl(settings.lineWorks.webhookUrl || '');
-      setLwBotName(settings.lineWorks.botName || '部活出欠bot');
-      setLwSendSummary(settings.lineWorks.sendDailySummary ?? true);
-      setLwSendTardy(settings.lineWorks.sendTardyAlert ?? true);
-      setLwSendEventReminder(settings.lineWorks.sendEventReminder ?? true);
-      setLwClientId(settings.lineWorks.clientId || '');
-      setLwClientSecret(settings.lineWorks.clientSecret || '');
-      setLwServiceAccount(settings.lineWorks.serviceAccount || '');
-      setLwPrivateKey(settings.lineWorks.privateKey || '');
-      setLwBotId(settings.lineWorks.botId || '');
-      setLwChannelId(settings.lineWorks.channelId || '');
-    }
-    if (settings.lineWorksKeyReminder) {
-      setLwKRClientId(settings.lineWorksKeyReminder.clientId || '');
-      setLwKRClientSecret(settings.lineWorksKeyReminder.clientSecret || '');
-      setLwKRServiceAccount(settings.lineWorksKeyReminder.serviceAccount || '');
-      setLwKRPrivateKey(settings.lineWorksKeyReminder.privateKey || '');
-      setLwKRBotId(settings.lineWorksKeyReminder.botId || '');
-      setLwKRChannelId(settings.lineWorksKeyReminder.channelId || '');
-    }
-    if (settings.lineWorksEvents) {
-      setLwEvEnabled(settings.lineWorksEvents.enabled ?? false);
-      setLwEvClientId(settings.lineWorksEvents.clientId || '');
-      setLwEvClientSecret(settings.lineWorksEvents.clientSecret || '');
-      setLwEvServiceAccount(settings.lineWorksEvents.serviceAccount || '');
-      setLwEvPrivateKey(settings.lineWorksEvents.privateKey || '');
-      setLwEvBotId(settings.lineWorksEvents.botId || '');
-      setLwEvChannelId(settings.lineWorksEvents.channelId || '');
-    }
-    if (settings.autoAttendance) {
-      setAutoAttEnabled(settings.autoAttendance.enabled ?? false);
-      setAutoAttMode(settings.autoAttendance.mode || 'on_app_open');
-      setAutoAttTime(settings.autoAttendance.time || '08:30');
-    }
-  }, [settings.lineWorks, settings.lineWorksKeyReminder, settings.lineWorksEvents, settings.autoAttendance]);
-
-  const handleSaveUserName = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (userNameInput.trim()) {
-      setMyMemberProfile(userNameInput.trim(), userSectionInput, userPartInput);
-      setUserNameSaved(true);
-      setTimeout(() => setUserNameSaved(false), 2500);
-    }
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasscodeError('');
-    const success = loginAdmin(passcodeAttempt);
-    if (success) {
-      setPasscodeAttempt('');
-      setPasscodeError('');
-    } else {
-      setPasscodeError('合言葉が正しくありません。再度ご確認ください。');
-    }
-  };
-
-  const handleSaveNotificationSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSettingsSaved(false);
-    setSettingsError('');
+  // LINE WORKS 設定の保存（Firestoreの専用ドキュメント settings/lineworks に保存）
+  const handleSaveLineWorks = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setIsSaving(true);
-    
+    setLwTestErrorMsg(null);
     try {
-      // 数値順にソートして保存
-      const sortedStages = [...penaltyStages]
-        .filter(s => s.threshold > 0)
-        .sort((a, b) => a.threshold - b.threshold);
-
-      await updateSettings({
-        summaryNotificationTime: notificationTime.trim(),
-        notificationsEnabled,
-        clubName: clubName.trim() || '部活動',
-        penaltyStages: sortedStages,
-      });
-      setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 3000);
-    } catch (err) {
-      setSettingsError('設定の保存に失敗しました。再度お試しください。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleChangePasscode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasscodeSuccess('');
-    setPasscodeChangeError('');
-    setIsSaving(true);
-
-    if (newPasscode.length < 4) {
-      setPasscodeChangeError('合言葉は4文字以上で設定してください');
-      setIsSaving(false);
-      return;
-    }
-    if (newPasscode !== confirmPasscode) {
-      setPasscodeChangeError('確認用の合言葉が一致しません');
-      setIsSaving(false);
-      return;
-    }
-
-    try {
-      await updateSettings({
-        adminPasscode: newPasscode.trim(),
-      });
-      setNewPasscode('');
-      setConfirmPasscode('');
-      setPasscodeSuccess('合言葉を変更しました');
-      setTimeout(() => setPasscodeSuccess(''), 3000);
-    } catch (err) {
-      setPasscodeChangeError('合言葉の変更に失敗しました。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleAddMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMemberError('');
-    if (!newMemberName.trim()) {
-      setMemberError('部員名を入力してください');
-      return;
-    }
-    await addMember(newMemberName, newMemberGrade, newMemberRole, newMemberSection, newMemberPart);
-    setNewMemberName('');
-    setNewMemberGrade('');
-    setNewMemberRole('部員');
-    setNewMemberSection('');
-    setNewMemberPart('');
-  };
-
-  const handleDeleteMember = async (id: string, name: string) => {
-    if (window.confirm(`「${name}」さんを部員一覧から削除しますか？`)) {
-      await deleteMember(id);
-    }
-  };
-
-  const handleClearAllMembers = async () => {
-    if (
-      window.confirm(
-        `登録されている部員全員（${members.length}名）を削除しますか？\n※初期サンプル名を含め全て削除され、空になります。`
-      )
-    ) {
-      await clearAllMembers();
-    }
-  };
-
-  const getLineWorksConfigPayload = () => ({
-    enabled: lwEnabled,
-    mode: lwMode,
-    webhookUrl: lwWebhookUrl.trim(),
-    botName: lwBotName.trim() || '部活出欠bot',
-    sendDailySummary: lwSendSummary,
-    sendTardyAlert: lwSendTardy,
-    sendEventReminder: lwSendEventReminder,
-    clientId: lwClientId.trim(),
-    clientSecret: lwClientSecret.trim(),
-    serviceAccount: lwServiceAccount.trim(),
-    privateKey: lwPrivateKey.trim(),
-    botId: lwBotId.trim(),
-    channelId: lwChannelId.trim(),
-  });
-
-  const handleSaveLineWorksSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLwTestResult(null);
-    setSettingsError('');
-    setIsSaving(true);
-    try {
-      const config = getLineWorksConfigPayload();
-      await updateSettings({
-        lineWorks: config,
-      });
-      setLwSettingsSaved(true);
-      setTimeout(() => setLwSettingsSaved(false), 2500);
-    } catch (err) {
-      setSettingsError('LINE WORKS設定の保存に失敗しました。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleSaveLineWorksKeyReminderSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLwKRTestResult(null);
-    setSettingsError('');
-    setIsSaving(true);
-    try {
-      const config = {
-        enabled: true,
-        mode: 'api2' as const,
-        clientId: lwKRClientId.trim(),
-        clientSecret: lwKRClientSecret.trim(),
-        serviceAccount: lwKRServiceAccount.trim(),
-        privateKey: lwKRPrivateKey.trim(),
-        botId: lwKRBotId.trim(),
-        channelId: lwKRChannelId.trim(),
-        sendDailySummary: false,
-        sendTardyAlert: false,
-      };
-      await updateSettings({
-        lineWorksKeyReminder: config,
-      });
-      setLwKRSettingsSaved(true);
-      setTimeout(() => setLwKRSettingsSaved(false), 2500);
-    } catch (err) {
-      setSettingsError('催促用LINE WORKS設定の保存に失敗しました。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleVerifyLineWorksKRAuth = async () => {
-    if (!lwKRClientId.trim() || !lwKRClientSecret.trim() || !lwKRServiceAccount.trim() || !lwKRPrivateKey.trim()) {
-      setLwKRTestResult({
-        type: 'error',
-        message: 'Client ID、Client Secret、Service Account、Private Key をすべて入力してください。',
-      });
-      return;
-    }
-
-    setLwKRVerifyingAuth(true);
-    setLwKRTestResult(null);
-
-    try {
-      const res = await verifyLineWorksApi2Auth({
-        clientId: lwKRClientId.trim(),
-        clientSecret: lwKRClientSecret.trim(),
-        serviceAccount: lwKRServiceAccount.trim(),
-        privateKey: lwKRPrivateKey.trim(),
-      });
-
-      if (res.success) {
-        setLwKRTestResult({
-          type: 'success',
-          message: '鍵催促用 LINE WORKS API 2.0 の認証とトークン発行に成功しました！',
-        });
-        // Clear stale automation error if manual verification succeeds
-        if (settings.lastLwKRStatus && !settings.lastLwKRStatus.success) {
-          updateSettings({ lastLwKRStatus: { success: true, timestamp: Date.now() } });
-        }
-        setTimeout(() => setLwKRTestResult(null), 8000);
-      } else {
-        setLwKRTestResult({
-          type: 'error',
-          message: res.error || '認証に失敗しました。認証情報をご確認ください。',
-        });
-      }
-    } catch (err: any) {
-      setLwKRTestResult({
-        type: 'error',
-        message: err?.message || '認証確認中にエラーが発生しました',
-      });
-    } finally {
-      setLwKRVerifyingAuth(false);
-    }
-  };
-
-  const handleTestLineWorksKR = async () => {
-    // Channel ID format check
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isPotentiallyInvalid = lwKRChannelId.trim() && !uuidRegex.test(lwKRChannelId.trim()) && !lwKRChannelId.trim().startsWith('c_');
-
-    if (!lwKRClientId.trim() || !lwKRBotId.trim() || !lwKRChannelId.trim()) {
-      setLwKRTestResult({
-        type: 'error',
-        message: 'Client ID, Bot ID, Channel ID をすべて入力してください',
-      });
-      return;
-    }
-
-    if (isPotentiallyInvalid) {
-      if (!window.confirm('入力された Channel ID が標準的な形式（UUID形式など）と異なるようです。このまま送信テストを続行しますか？\n※Channel IDは通常 8-4-4-4-12 形式の文字列です。')) {
-        return;
-      }
-    }
-
-    setLwKRTesting(true);
-    setLwKRTestResult(null);
-
-    try {
-      // Save configuration first
-      const config = {
-        enabled: true,
-        mode: 'api2' as const,
-        clientId: lwKRClientId.trim(),
-        clientSecret: lwKRClientSecret.trim(),
-        serviceAccount: lwKRServiceAccount.trim(),
-        privateKey: lwKRPrivateKey.trim(),
-        botId: lwKRBotId.trim(),
-        channelId: lwKRChannelId.trim(),
-        sendDailySummary: false,
-        sendTardyAlert: false,
-      };
-      await updateSettings({
-        lineWorksKeyReminder: config,
-      });
-
-      const res = await sendLineWorksKeyReminderTest();
-      if (res.success) {
-        setLwKRTestResult({
-          type: 'success',
-          message: '【トークン取得成功】LINE WORKSへテスト催促メッセージを送信しました！トークルームをご確認ください。',
-        });
-        setTimeout(() => setLwKRTestResult(null), 8000);
-      } else {
-        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
-        let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (res.status === 404 || errorMsg.includes('404')) {
-          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-        } else if (res.status === 401 || errorMsg.includes('401')) {
-          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
-        } else if (errorMsg.includes('scope')) {
-          errorMsg = 'Request scope is not valid. LINE WORKS Developer Console で「bot」および「bot.message」のスコープが許可されているか確認してください。';
-        }
-        setLwKRTestResult({
-          type: 'error',
-          message: `【送信失敗】${statusDetail} ${errorMsg}`,
-        });
-      }
-    } catch (err: any) {
-      let errorMsg = err?.message || '送信中にエラーが発生しました';
-      if (errorMsg.includes('404')) {
-        errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-      }
-      setLwKRTestResult({
-        type: 'error',
-        message: errorMsg,
-      });
-    } finally {
-      setLwKRTesting(false);
-    }
-  };
-
-  const handleSaveLineWorksEventsSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLwEvTestResult(null);
-    setSettingsError('');
-    setIsSaving(true);
-    try {
-      const config = {
-        enabled: lwEvEnabled,
-        mode: 'api2' as const,
-        clientId: lwEvClientId.trim(),
-        clientSecret: lwEvClientSecret.trim(),
-        serviceAccount: lwEvServiceAccount.trim(),
-        privateKey: lwEvPrivateKey.trim(),
-        botId: lwEvBotId.trim(),
-        channelId: lwEvChannelId.trim(),
-        sendDailySummary: false,
-        sendTardyAlert: false,
-        sendEventReminder: true,
-      };
-      await updateSettings({
-        lineWorksEvents: config,
-      });
-      setLwEvSettingsSaved(true);
-      setTimeout(() => setLwEvSettingsSaved(false), 2500);
-    } catch (err) {
-      setSettingsError('イベント用LINE WORKS設定の保存に失敗しました。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleVerifyLineWorksEventsAuth = async () => {
-    if (!lwEvClientId.trim() || !lwEvClientSecret.trim() || !lwEvServiceAccount.trim() || !lwEvPrivateKey.trim()) {
-      setLwEvTestResult({
-        type: 'error',
-        message: 'Client ID、Client Secret、Service Account、Private Key をすべて入力してください。',
-      });
-      return;
-    }
-
-    setLwEvVerifyingAuth(true);
-    setLwEvTestResult(null);
-
-    try {
-      const res = await verifyLineWorksApi2Auth({
-        clientId: lwEvClientId.trim(),
-        clientSecret: lwEvClientSecret.trim(),
-        serviceAccount: lwEvServiceAccount.trim(),
-        privateKey: lwEvPrivateKey.trim(),
-      });
-
-      if (res.success) {
-        setLwEvTestResult({
-          type: 'success',
-          message: 'イベント用 LINE WORKS API 2.0 の認証とトークン発行に成功しました！',
-        });
-        setTimeout(() => setLwEvTestResult(null), 8000);
-      } else {
-        setLwEvTestResult({
-          type: 'error',
-          message: res.error || '認証に失敗しました。認証情報をご確認ください。',
-        });
-      }
-    } catch (err: any) {
-      setLwEvTestResult({
-        type: 'error',
-        message: err?.message || '認証確認中にエラーが発生しました',
-      });
-    } finally {
-      setLwEvVerifyingAuth(false);
-    }
-  };
-
-  const handleTestLineWorksEvents = async () => {
-    // Channel ID format check
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isPotentiallyInvalid = lwEvChannelId.trim() && !uuidRegex.test(lwEvChannelId.trim()) && !lwEvChannelId.trim().startsWith('c_');
-
-    // 必須項目のチェック
-    if (!lwEvClientId.trim() || !lwEvClientSecret.trim() || !lwEvServiceAccount.trim() || !lwEvPrivateKey.trim() || !lwEvBotId.trim() || !lwEvChannelId.trim()) {
-      setLwEvTestResult({
-        type: 'error',
-        message: 'テスト通知の送信には Client ID, Secret, Service Account, Private Key, Bot ID, Channel ID のすべての接続情報が必要です。',
-      });
-      return;
-    }
-
-    if (isPotentiallyInvalid) {
-      if (!window.confirm('入力されたイベント用 Channel ID が標準的な形式（UUID形式など）と異なるようです。このまま送信テストを続行しますか？')) {
-        return;
-      }
-    }
-
-    setLwEvTesting(true);
-    setLwEvTestResult(null);
-
-    try {
-      // Save configuration first
-      const config = {
-        enabled: lwEvEnabled,
-        mode: 'api2' as const,
-        clientId: lwEvClientId.trim(),
-        clientSecret: lwEvClientSecret.trim(),
-        serviceAccount: lwEvServiceAccount.trim(),
-        privateKey: lwEvPrivateKey.trim(),
-        botId: lwEvBotId.trim(),
-        channelId: lwEvChannelId.trim(),
-        sendDailySummary: false,
-        sendTardyAlert: false,
-        sendEventReminder: true,
-      };
-      await updateSettings({
-        lineWorksEvents: config,
-      });
-
-      const res = await sendLineWorksEventReminderTest();
-      if (res.success) {
-        setLwEvTestResult({
-          type: 'success',
-          message: '【トークン取得成功】LINE WORKSへイベントテストメッセージを送信しました！トークルームをご確認ください。',
-        });
-        setTimeout(() => setLwEvTestResult(null), 8000);
-      } else {
-        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
-        let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (res.status === 404 || errorMsg.includes('404')) {
-          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-        } else if (res.status === 401 || errorMsg.includes('401')) {
-          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
-        } else if (errorMsg.includes('scope')) {
-          errorMsg = `Request scope is not valid. LINE WORKS Developer Console で、このアプリの Service Account に「bot」および「bot.message」のスコープが許可されているか確認してください。`;
-        }
-        setLwEvTestResult({
-          type: 'error',
-          message: `【送信失敗】${statusDetail} ${errorMsg}`,
-        });
-      }
-    } catch (err: any) {
-      let errorMsg = err?.message || '送信中にエラーが発生しました。';
-      if (errorMsg.includes('404')) {
-        errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-      } else if (errorMsg.includes('scope')) {
-        errorMsg = `[権限エラー] Request scope is not valid. LINE WORKS Developer Console で、このアプリの Service Account に「bot」および「bot.message」のスコープが許可されているか確認してください。`;
-      }
-      setLwEvTestResult({
-        type: 'error',
-        message: errorMsg,
-      });
-    } finally {
-      setLwEvTesting(false);
-    }
-  };
-
-  const handleSaveAutoAttendanceSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSettingsError('');
-    setIsSaving(true);
-    try {
-      await updateSettings({
-        autoAttendance: {
-          enabled: autoAttEnabled,
-          mode: autoAttMode,
-          time: autoAttTime,
-        },
-      });
-      setAutoAttSaved(true);
-      setTimeout(() => setAutoAttSaved(false), 3000);
-    } catch (err) {
-      setSettingsError('自動出席設定の保存に失敗しました。');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleVerifyLineWorksAuth = async () => {
-    if (!lwClientId.trim() || !lwClientSecret.trim() || !lwServiceAccount.trim() || !lwPrivateKey.trim() || !lwBotId.trim()) {
-      setLwTestResult({
-        type: 'error',
-        message: 'Client ID、Client Secret、Service Account、Private Key、Bot ID をすべて入力してください。',
-      });
-      return;
-    }
-
-    setLwVerifyingAuth(true);
-    setLwTestResult(null);
-
-    // Save configuration first
-    const config = getLineWorksConfigPayload();
-    await updateSettings({ lineWorks: config });
-
-    try {
-      const res = await verifyLineWorksApi2Auth({
+      const updatedLineWorks = {
+        enabled: Boolean(lwEnabled),
+        mode: lwMode,
+        webhookUrl: lwWebhookUrl.trim(),
         clientId: lwClientId.trim(),
         clientSecret: lwClientSecret.trim(),
         serviceAccount: lwServiceAccount.trim(),
         privateKey: lwPrivateKey.trim(),
-      });
+        botId: lwBotId.trim(),
+        channelId: lwChannelId.trim(),
+        serverId: lwServerId.trim() || '40170745',
+        sendDailySummary: Boolean(lwSendSummary),
+        sendTardyAlert: Boolean(lwSendTardy),
+      };
 
-      if (res.success) {
-        setLwTestResult({
-          type: 'success',
-          message: 'LINE WORKS API 2.0 の認証とトークン発行に成功しました！連携の準備が整っています。',
-        });
-        setTimeout(() => setLwTestResult(null), 8000);
-      } else {
-        setLwTestResult({
-          type: 'error',
-          message: res.error || '認証に失敗しました。Private Keyの改行やClient Secretをご確認ください。',
-        });
-      }
+      // 【要件1】Firestoreの専用ドキュメント settings/lineworks に直接保存
+      await saveLineWorksConfigToFirestore(updatedLineWorks);
+
+      // AppContext & 全体設定（config/app_settings）にも同期
+      await saveLineWorksSettings(updatedLineWorks);
+
+      setLwSaved(true);
+      setTimeout(() => setLwSaved(false), 4000);
     } catch (err: any) {
-      setLwTestResult({
-        type: 'error',
-        message: err?.message || '認証確認中にエラーが発生しました',
-      });
+      console.error('[SettingsScreen] LINE WORKS設定保存エラー:', err);
+      setLwTestErrorMsg(`設定の保存に失敗しました: ${err.message}`);
+      setTimeout(() => setLwTestErrorMsg(null), 5000);
     } finally {
-      setLwVerifyingAuth(false);
+      setIsSaving(false);
     }
   };
 
-  const handleTestLineWorks = async () => {
-    if (lwMode === 'webhook' && !lwWebhookUrl.trim()) {
-      setLwTestResult({
-        type: 'error',
-        message: 'LINE WORKSのWebhook URLを入力してからテストを実行してください',
-      });
-      return;
-    }
-
-    if (lwMode === 'api2') {
-      // Channel ID format check
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const isPotentiallyInvalid = lwChannelId.trim() && !uuidRegex.test(lwChannelId.trim()) && !lwChannelId.trim().startsWith('c_');
-
-      if (!lwClientId.trim() || !lwClientSecret.trim() || !lwServiceAccount.trim() || !lwPrivateKey.trim() || !lwBotId.trim() || !lwChannelId.trim()) {
-        setLwTestResult({
-          type: 'error',
-          message: 'API 2.0 連携に必要な項目（Client ID, Client Secret, Service Account, Private Key, Bot ID, Channel ID）をすべて入力してください',
-        });
-        return;
-      }
-
-      if (isPotentiallyInvalid) {
-        if (!window.confirm('入力された Channel ID が標準的な形式（UUID形式など）と異なるようです。このまま送信テストを続行しますか？')) {
-          return;
-        }
-      }
-    }
-
-    setLwTesting(true);
-    setLwTestResult(null);
+  // LINE WORKS API 2.0 認証確認（【要件4】Firestoreの設定を使ってトークン発行テストを実行）
+  const handleVerifyLineWorksAuth = async () => {
+    setLwVerifying(true);
+    setLwVerifyResult(null);
+    setLwTestSuccessMsg(null);
+    setLwTestErrorMsg(null);
 
     try {
-      // Save configuration first so AppContext uses latest settings
-      const config = getLineWorksConfigPayload();
-      await updateSettings({
-        lineWorks: config,
+      // 1. まずFirestoreの専用ドキュメント settings/lineworks から最新設定を読み込み
+      const firestoreConfig = await fetchLineWorksConfigFromFirestore();
+      // 2. 入力欄の値とFirestore設定をマージ（Firestoreを優先、未保存入力値・環境変数へフォールバック）
+      const effectiveConfig = resolveEffectiveLineWorksConfig(firestoreConfig, {
+        clientId: lwClientId.trim(),
+        clientSecret: lwClientSecret.trim(),
+        serviceAccount: lwServiceAccount.trim(),
+        privateKey: lwPrivateKey.trim(),
+        serverId: lwServerId.trim() || '40170745',
       });
 
-      const res = await sendLineWorksTestSummary();
-      if (res.success) {
-        setLwTestResult({
-          type: 'success',
-          message: '【トークン取得成功】LINE WORKSへ正常に本日の出欠サマリーを送信できました！トークルームをご確認ください。',
-        });
-        setTimeout(() => setLwTestResult(null), 8000);
-      } else {
-        const statusDetail = res.status ? `(HTTP ${res.status})` : '';
-        let errorMsg = res.error || 'LINE WORKSへの送信に失敗しました。';
-        if (res.status === 404 || errorMsg.includes('404')) {
-          errorMsg = '送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-        } else if (res.status === 401 || errorMsg.includes('401')) {
-          errorMsg = '認証に失敗しました。Client Secret または Private Key が正しいか確認してください。';
-        } else if (res.status === 403 || errorMsg.includes('scope')) {
-          errorMsg = 'Request scope is not valid. LINE WORKS Developer Console で「bot」および「bot.message」のスコープが許可されているか確認してください。';
-        }
-        setLwTestResult({
-          type: 'error',
-          message: `【送信失敗】${statusDetail} ${errorMsg}`,
-        });
+      console.log('[SettingsScreen] Firestore設定による認証テスト開始:', {
+        fromFirestore: Boolean(firestoreConfig),
+        clientId: effectiveConfig.clientId,
+        serviceAccount: effectiveConfig.serviceAccount,
+        serverId: effectiveConfig.serverId,
+      });
+
+      const result = await verifyLineWorksApi2Auth({
+        clientId: effectiveConfig.clientId,
+        clientSecret: effectiveConfig.clientSecret,
+        serviceAccount: effectiveConfig.serviceAccount,
+        privateKey: effectiveConfig.privateKey,
+        serverId: effectiveConfig.serverId,
+      });
+
+      setLwVerifyResult(result);
+      if (result.success) {
+        setLwTestSuccessMsg('LINE WORKS API 2.0 認証（アクセストークン発行）に成功しました！Firestoreの設定で正常に動作しています。');
+        setTimeout(() => setLwTestSuccessMsg(null), 6000);
       }
-    } catch (err: any) {
-      let errorMsg = err?.message || '送信中にエラーが発生しました';
-      if (errorMsg.includes('404')) {
-        errorMsg = '【HTTP 404 エラー】送信先のチャンネルが見つかりません。Channel ID が正しいか、Botがそのトークルームに招待されているかを確認してください。';
-      }
-      setLwTestResult({
-        type: 'error',
-        message: errorMsg,
+    } catch (unexpectedErr: any) {
+      console.error('[SettingsScreen] 予期しないエラーを捕捉:', unexpectedErr);
+      setLwVerifyResult({
+        success: false,
+        httpStatus: 0,
+        responseBody: unexpectedErr.message || '予期しないエラーが発生しました',
+        errorCode: 'UNEXPECTED_CLIENT_EXCEPTION',
+        error: unexpectedErr.message || 'クライアント例外',
+        origin: 'frontend',
+        location: 'フロントエンド（SettingsScreen.tsx handleVerifyLineWorksAuth catch）',
+        route: 'フロントエンド（ブラウザ）側でエラー検知',
       });
     } finally {
-      setLwTesting(false);
+      setLwVerifying(false);
     }
   };
 
-  const handleCopySummaryForLineWorks = () => {
-    const today = getTodayString();
-    const summaryText = formatDailySummaryMessage(
-      settings.clubName || '部活動',
-      today,
-      attendances,
-      members
-    );
-    navigator.clipboard.writeText(summaryText);
-    setCopiedSummary(true);
-    setTimeout(() => setCopiedSummary(false), 2500);
+  // LINE WORKS テストメッセージ送信（Bot または Webhook）
+  const handleSendTestMessage = async () => {
+    if (!lwEnabled) {
+      setLwTestErrorMsg('LINE WORKS連携を有効（ON）にしてください');
+      setTimeout(() => setLwTestErrorMsg(null), 4000);
+      return;
+    }
+    setLwTestingSend(true);
+    setLwTestSuccessMsg(null);
+    setLwTestErrorMsg(null);
+
+    try {
+      const testConfig = {
+        enabled: true,
+        mode: lwMode,
+        webhookUrl: lwWebhookUrl.trim(),
+        clientId: lwClientId.trim(),
+        clientSecret: lwClientSecret.trim(),
+        serviceAccount: lwServiceAccount.trim(),
+        privateKey: lwPrivateKey.trim(),
+        botId: lwBotId.trim(),
+        channelId: lwChannelId.trim(),
+        serverId: lwServerId.trim() || '40170745',
+      };
+
+      const res = await sendLineWorksNotification(
+        testConfig,
+        `【吹奏楽部 出欠管理アプリ】LINE WORKS 連携テスト送信\n送信時刻: ${new Date().toLocaleTimeString('ja-JP')}\n認証・設定が正常に完了しています。`
+      );
+
+      if (res.success) {
+        setLwTestSuccessMsg('LINE WORKSへテストメッセージを送信しました！トークルームをご確認ください。');
+        setTimeout(() => setLwTestSuccessMsg(null), 5000);
+      } else {
+        setLwTestErrorMsg(`送信に失敗しました: ${res.error || '不明なエラー'}`);
+      }
+    } catch (err: any) {
+      setLwTestErrorMsg(`送信エラー: ${err.message}`);
+    } finally {
+      setLwTestingSend(false);
+    }
+  };
+
+  const handleAddMemberSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMemberName.trim()) return;
+    await addMember(newMemberName.trim(), newMemberGrade, '部員', newMemberSection, newMemberPart);
+    setNewMemberName('');
   };
 
   return (
-    <div className="space-y-4 pb-28 pt-2">
-      {/* Page Title */}
-      <div>
-        <h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100">設定</h2>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          画面表示やあなたのお名前、部活の全体設定を管理します
-        </p>
-      </div>
-
-      {/* 【追加機能5】ダークモード・外観設定 */}
-      <div
-        id="theme-settings-card"
-        className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            {isDark ? (
-              <Moon className="w-4 h-4 text-indigo-400" />
-            ) : (
-              <Sun className="w-4 h-4 text-amber-500" />
-            )}
-            外観・テーマ設定（ダークモード）
-          </h3>
-          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
-            現在: {themeMode === 'system' ? `自動 (${isDark ? 'ダーク' : 'ライト'})` : themeMode === 'dark' ? 'ダーク' : 'ライト'}
-          </span>
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          お好みの表示モードを選択できます。端末の設定に合わせる「自動」も選べます。設定は次回起動時も維持されます。
-        </p>
-
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <button
-            type="button"
-            id="btn-theme-light"
-            onClick={() => setThemeMode('light')}
-            className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
-              themeMode === 'light'
-                ? 'border-blue-600 bg-blue-50/80 text-blue-700 ring-2 ring-blue-500/30 font-bold dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-500'
-                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Sun className={`w-5 h-5 ${themeMode === 'light' ? 'text-amber-500' : 'text-slate-400'}`} />
-            <span className="text-xs font-semibold">ライト</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-theme-dark"
-            onClick={() => setThemeMode('dark')}
-            className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
-              themeMode === 'dark'
-                ? 'border-blue-600 bg-blue-50/80 text-blue-700 ring-2 ring-blue-500/30 font-bold dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-500'
-                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Moon className={`w-5 h-5 ${themeMode === 'dark' ? 'text-indigo-400' : 'text-slate-400'}`} />
-            <span className="text-xs font-semibold">ダーク</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-theme-system"
-            onClick={() => setThemeMode('system')}
-            className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
-              themeMode === 'system'
-                ? 'border-blue-600 bg-blue-50/80 text-blue-700 ring-2 ring-blue-500/30 font-bold dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-500'
-                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Monitor className={`w-5 h-5 ${themeMode === 'system' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
-            <span className="text-xs font-semibold">自動 (端末依存)</span>
-          </button>
-        </div>
-
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <span className="text-xs text-slate-500 dark:text-slate-400">起動画面アニメーション</span>
-          <button
-            type="button"
-            id="btn-preview-splash-screen"
-            onClick={triggerSplashScreen}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-xl text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-            <span>起動画面をプレビュー</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Google Play 公開 & スマホアプリ化 (PWA) */}
-      <div
-        id="pwa-google-play-card"
-        className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3.5 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Smartphone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            Google Play 公開 & スマホアプリ化 (PWA)
-          </h3>
-          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
-            <CheckCircle className="w-3 h-3" />
-            PWA要件適合済
-          </span>
-        </div>
-
-        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-          このアプリはGoogle公式推奨のPWA（Trusted Web Activity）に対応しています。
-          スマホのホーム画面に即座にインストールできるほか、無料の支援ツール（PWABuilder）を使って数分で
-          <strong>Google Play用ファイル（.aab）</strong>を生成してストア申請できます。
-        </p>
-
-        {/* 端末への直接インストールセクション */}
-        <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-              <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              端末にアプリとして追加
-            </span>
-            {isInstalled ? (
-              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                <CheckCircle className="w-3.5 h-3.5" />
-                インストール済み
-              </span>
-            ) : null}
-          </div>
-
-          {!isInstalled ? (
-            <div className="space-y-2">
-              {isInstallable ? (
-                <button
-                  type="button"
-                  id="btn-pwa-install"
-                  onClick={async () => {
-                    const success = await promptInstall();
-                    if (!success) setShowPwaGuide(true);
-                  }}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-black rounded-2xl shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
-                >
-                  <Smartphone className="w-5 h-5" />
-                  📲 ホーム画面に追加する
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowPwaGuide(true)}
-                  className="w-full py-3 px-4 bg-white dark:bg-slate-800 border-2 border-blue-100 dark:border-blue-900/50 text-blue-600 dark:text-blue-400 text-sm font-black rounded-2xl flex items-center justify-center gap-2.5 transition-all hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                >
-                  <HelpCircle className="w-5 h-5" />
-                  ホーム画面への追加方法を確認
-                </button>
-              )}
-              
-              <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 font-bold px-4">
-                ブラウザのメニューから直接「インストール」または「ホーム画面に追加」を選ぶこともできます。
-              </p>
-            </div>
-          ) : (
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/50 rounded-xl flex items-center gap-3">
-              <div className="w-8 h-8 bg-emerald-500 rounded-full flex items-center justify-center text-white shrink-0">
-                <Check className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                ✅ ホーム画面に追加済みです
-                <br />
-                <span className="text-[10px] font-medium opacity-80">全画面アプリとして快適にご利用いただけます。</span>
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Google Play 公開手順の詳細アコーディオン */}
-        <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
-          <button
-            type="button"
-            id="toggle-google-play-guide"
-            onClick={() => setShowPlayGuide(!showPlayGuide)}
-            className="w-full p-3 bg-slate-50/70 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between text-left transition-colors"
-          >
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Google Play 公開パッケージ（.aab）の作成手順
-            </span>
-            {showPlayGuide ? (
-              <ChevronUp className="w-4 h-4 text-slate-400" />
-            ) : (
-              <ChevronDown className="w-4 h-4 text-slate-400" />
-            )}
-          </button>
-
-          {showPlayGuide && (
-            <div className="p-3.5 bg-white dark:bg-slate-900 text-xs space-y-3.5 border-t border-slate-200 dark:border-slate-800">
-              {/* ステップ1: URLコピー */}
-              <div className="space-y-1.5">
-                <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
-                    1
-                  </span>
-                  このアプリの公開URLを取得する
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Google PlayのアプリはWebのHTTPS URLを読み込みます。下のURLをコピーしてください。
-                </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={window.location.origin}
-                    className="flex-1 px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 font-mono text-[11px]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(window.location.origin);
-                      setCopiedAppUrl(true);
-                      setTimeout(() => setCopiedAppUrl(false), 2000);
-                    }}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-semibold rounded-lg flex items-center gap-1 shrink-0"
-                  >
-                    {copiedAppUrl ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        コピー完了
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        URLコピー
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* ステップ2: PWABuilderで.aabを生成 */}
-              <div className="space-y-1.5">
-                <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
-                    2
-                  </span>
-                  PWABuilder で .aab（Playストア用ファイル）を生成
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Microsoft/Google公式支援ツール<strong>PWABuilder</strong>を開き、コピーしたURLを入力して「Start」を押します。
-                </p>
-                <a
-                  href="https://www.pwabuilder.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:underline font-bold text-xs"
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  PWABuilder を開く（外部サイト）
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-
-              {/* ステップ3: Package for Google Play */}
-              <div className="space-y-1.5">
-                <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
-                    3
-                  </span>
-                  「Package for Store」→「Google Play」を選択
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  マニフェストとService Workerはすでに本アプリ内に完備されているため、すべてグリーン（合格）になります。「Generate Package」をクリックすると、提出用の
-                  <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10px] font-mono">
-                    app-release.aab
-                  </code>
-                  が含まれるZIPファイルがダウンロードされます。
-                </p>
-              </div>
-
-              {/* ステップ4: Google Play Consoleで申請 */}
-              <div className="space-y-1.5">
-                <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
-                    4
-                  </span>
-                  Google Play Console に提出して審査へ
-                </span>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Google Play Console（初回登録料 $25）で「アプリを作成」し、ダウンロードした
-                  <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10px] font-mono">
-                    .aab
-                  </code>
-                  をアップロード。ストア掲載情報（説明文・スクリーンショット）を入力して公開審査に提出します。
-                </p>
-              </div>
-
-              {/* PWA対応済みコンポーネント一覧 */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5">
-                  本アプリの対応済みPWAリソース:
-                </p>
-                <div className="grid grid-cols-2 gap-1 text-[11px] text-slate-700 dark:text-slate-300">
-                  <div className="flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3 text-emerald-500" />
-                    <span>Web App Manifest</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3 text-emerald-500" />
-                    <span>Service Worker (キャッシュ対応)</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3 text-emerald-500" />
-                    <span>アプリアイコン (192px/512px)</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle className="w-3 h-3 text-emerald-500" />
-                    <span>マスク可能アイコン (Android適応)</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 1. General User Settings: Your Name */}
+    <div className="space-y-4 pb-20">
+      {/* User Profile Card */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
-        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+        <h2 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
           <User className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-          部員設定（お名前・パート）
-        </h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          出欠連絡の送信時に自動入力され、パート・区分別集計や絞り込みに反映されます
+          自分のプロフィール設定
+        </h2>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+          設定すると出欠連絡フォームで名前とパートが自動入力されます
         </p>
 
-        {userNameSaved && (
-          <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            <span>プロフィール設定（お名前・パート）を保存しました</span>
+        {profileSaved && (
+          <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>プロフィールを保存しました</span>
           </div>
         )}
 
-        <form onSubmit={handleSaveUserName} className="space-y-3">
+        <form onSubmit={handleSaveProfile} className="space-y-3">
           <div>
-            <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">
-              部員一覧から選ぶ、または直接入力
+            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+              自分の名前
             </label>
-            {members.length > 0 && (
-              <select
-                value={members.some((m) => m.name === userNameInput) ? userNameInput : ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setUserNameInput(val);
-                  const selectedMember = members.find((m) => m.name === val);
-                  if (selectedMember) {
-                    if (selectedMember.section) setUserSectionInput(selectedMember.section);
-                    if (selectedMember.part) setUserPartInput(selectedMember.part);
-                  }
-                }}
-                className="w-full mb-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">部員リストから選択...</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.name} {m.part ? `(${m.part})` : m.section ? `(${m.section})` : m.grade ? `(${m.grade})` : ''}
-                  </option>
-                ))}
-              </select>
-            )}
-
             <input
               type="text"
-              id="input-user-myname"
               value={userNameInput}
               onChange={(e) => setUserNameInput(e.target.value)}
-              placeholder="例: 田中 健太"
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="例: 佐藤 花子"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
             />
           </div>
 
-          {/* Section & Part Dropdowns */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">
-                区分
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                セクション
               </label>
               <select
-                id="select-user-section"
                 value={userSectionInput}
                 onChange={(e) => {
-                  const sec = e.target.value;
-                  setUserSectionInput(sec);
-                  const availableParts = sec ? SECTION_PARTS_MAP[sec as SectionCategory] || [] : [];
-                  if (!availableParts.includes(userPartInput)) {
-                    setUserPartInput(availableParts[0] || '');
-                  }
+                  setUserSectionInput(e.target.value);
+                  const pList = getPartsForSection(e.target.value);
+                  setUserPartInput(pList[0] || '');
                 }}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium"
               >
-                <option value="">区分を選択...</option>
-                {SECTION_CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
+                {SECTIONS_AND_PARTS.map((s) => (
+                  <option key={s.section} value={s.section}>
+                    {s.section}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 mb-1 block">
-                詳細パート
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                パート
               </label>
               <select
-                id="select-user-part"
                 value={userPartInput}
                 onChange={(e) => setUserPartInput(e.target.value)}
-                disabled={!userSectionInput}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium"
               >
-                <option value="">
-                  {userSectionInput ? '詳細パートを選択...' : '先に区分を選択'}
-                </option>
-                {userSectionInput &&
-                  (SECTION_PARTS_MAP[userSectionInput as SectionCategory] || []).map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
+                {getPartsForSection(userSectionInput).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
           <button
             type="submit"
-            id="btn-save-myname"
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
+            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
           >
-            プロフィール（お名前・パート）を保存する
+            プロフィールを保存
           </button>
         </form>
       </div>
 
-      {/* 1.5 Frequently Used Patterns Management Card */}
-      <div
-        id="settings-patterns-section"
-        className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-      >
+      {/* Attendance Schedule Glance (一般部員・管理者共通: 出欠確認スケジュール状況) */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-500" />
-            よく使うパターン（ワンタップ入力）の設定
-          </h3>
-          <button
-            type="button"
-            id="btn-settings-open-pattern-modal"
-            onClick={() => setIsPatternModalOpen(true)}
-            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            パターンを追加・編集
-          </button>
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          「体調不良で欠席」「通院遅刻」「掃除遅刻」など、よく使う出欠パターンを登録・並び替え・削除できます。
-        </p>
-
-        <div className="flex flex-wrap gap-2 pt-1">
-          {patterns.map((p) => {
-            const badgeColor =
-              p.type === '欠席'
-                ? 'bg-red-500'
-                : p.type === '遅刻'
-                ? 'bg-amber-500'
-                : p.type === '緊急遽刻'
-                ? 'bg-rose-600'
-                : 'bg-yellow-500';
-
-            return (
-              <div
-                key={p.id}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-2"
-              >
-                <span className={`w-2 h-2 rounded-full ${badgeColor}`} />
-                <span>{p.name}</span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
-                  ({p.type}
-                  {p.time ? `・${p.time}` : ''}
-                  {p.reason ? `・${p.reason}` : ''})
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-          <span className="text-[11px] text-slate-400 dark:text-slate-500">
-            登録数: {patterns.length} 件
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              出欠確認・配信スケジュール状況
+            </h2>
+          </div>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+            todayResolvedSchedule.enabled
+              ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'
+          }`}>
+            {todayResolvedSchedule.enabled ? '本日活動日' : '本日OFF'}
           </span>
-          <button
-            type="button"
-            onClick={() => setIsPatternModalOpen(true)}
-            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-          >
-            パターン管理画面を開く →
-          </button>
-        </div>
-      </div>
-
-      {/* 1.7 Device Push Notification Card */}
-      <div
-        id="settings-device-push-notification"
-        className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            この端末のプッシュ通知
-          </h3>
-          <button
-            type="button"
-            onClick={() => {
-              setNotifGuideReason(null);
-              setNotifGuideOpen(true);
-            }}
-            className="text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium flex items-center gap-1 cursor-pointer"
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            設定ヘルプ
-          </button>
         </div>
 
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          部員の遅刻連絡やまとめ通知を、このスマートフォン・PCのブラウザ通知として直接受信します
-        </p>
-
-        {notifToast && (
-          <div
-            className={`p-2.5 rounded-xl text-xs flex items-center gap-2 border ${
-              notifToast.type === 'success'
-                ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
-                : 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
-            }`}
-          >
-            {notifToast.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-            )}
-            <span>{notifToast.text}</span>
-          </div>
-        )}
-
-        {hasNotificationPermission ? (
-          <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-300">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <div>
-                <span className="font-bold">通知が有効です</span>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                  部活の連絡がこの端末に即時配信されます
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              id="btn-settings-send-test-notif"
-              onClick={handleSendTestNotifClick}
-              disabled={isSendingLocalNotifTest}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition-colors flex items-center gap-1 cursor-pointer shrink-0 shadow-xs"
-            >
-              <Bell className="w-3 h-3" />
-              {isSendingLocalNotifTest ? '送信中...' : 'テスト通知'}
-            </button>
-          </div>
-        ) : isInIframe ? (
-          <div className="p-3 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl space-y-2 text-xs">
-            <div className="flex items-start gap-2 text-amber-900 dark:text-amber-200">
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <span className="font-bold">別タブで開くと通知を許可できます</span>
-                <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
-                  プレビュー枠内（iframe）ではブラウザの安全制限のため通知許可ポップアップが表示されません。別タブで開くとワンタップで許可できます。
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                id="btn-settings-open-new-tab"
-                onClick={() => {
-                  if (typeof window !== 'undefined') {
-                    window.open(window.location.href, '_blank', 'noopener,noreferrer');
-                  }
-                }}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                別タブでアプリを開く
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setNotifGuideReason('iframe');
-                  setNotifGuideOpen(true);
-                }}
-                className="px-3 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-50 cursor-pointer transition-colors"
-              >
-                詳しい解説
-              </button>
-            </div>
-          </div>
-        ) : notificationStatus === 'denied' ? (
-          <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-rose-900 dark:text-rose-200">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              <div>
-                <span className="font-bold">ブラウザで通知が拒否されています</span>
-                <p className="text-[11px] text-rose-800 dark:text-rose-300">
-                  アドレスバーの鍵マークから「通知」を許可に切り替えてください
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setNotifGuideReason('denied');
-                setNotifGuideOpen(true);
-              }}
-              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer transition-colors"
-            >
-              解除手順
-            </button>
-          </div>
-        ) : (
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
-              <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>通知を許可すると、遅刻連絡やまとめ通知を即座に受信できます</span>
-            </div>
-            <button
-              type="button"
-              id="btn-settings-request-notif"
-              onClick={handleRequestNotifClick}
-              disabled={isRequestingNotif}
-              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-lg text-xs shrink-0 cursor-pointer shadow-xs transition-colors flex items-center gap-1"
-            >
-              {isRequestingNotif ? '確認中...' : '通知を許可する'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Non-Admin view: Notification Schedule Info Card */}
-      {!isAdmin && (
-        <div
-          id="member-notification-schedule-info"
-          className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-        >
+        {/* Today's Status Banner */}
+        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-1.5">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              部活の出欠まとめ通知予定
-            </h3>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
-              曜日別・カレンダー連動
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              本日の出欠確認（締切時刻）
+            </span>
+            <span className="text-[10px] font-bold text-slate-400">
+              {formatJapaneseDate(todayDateStr, true)}
             </span>
           </div>
+          <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xl font-black text-slate-900 dark:text-slate-100">
+                {todayResolvedSchedule.enabled ? todayResolvedSchedule.time : 'OFF'}
+              </span>
+              <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                {todayResolvedSchedule.label || (todayResolvedSchedule.enabled ? '通常練習' : '休み')}
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              基本設定: {summaryNotificationTime}
+            </span>
+          </div>
+        </div>
 
-          {/* Today's schedule preview */}
-          {(() => {
-            const todayStr = getTodayString();
-            const todaySched = resolveScheduleForDate(todayStr, settings);
-            return (
-              <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/70 dark:border-blue-900/60 flex items-center justify-between gap-2 flex-wrap">
-                <div>
-                  <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300 block">
-                    本日 ({formatJapaneseDate(todayStr, false)}) の配信予定
-                  </span>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    {todaySched.enabled ? (
-                      <>
-                        <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
-                          {todaySched.time}
-                        </span>
-                        <span className="text-xs text-slate-600 dark:text-slate-300">
-                          配信予定
-                        </span>
-                        {todaySched.label && (
-                          <span className="text-xs text-slate-500 dark:text-slate-400">
-                            ({todaySched.label})
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
-                        本日は通知OFF (部活休み / 配信なし)
-                      </span>
-                    )}
-                  </div>
-                </div>
+        {/* 7-Day Overview Pills */}
+        <div className="space-y-1">
+          <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+            週間スケジュール（月〜日）
+          </span>
+          <div className="grid grid-cols-7 gap-1">
+            {[1, 2, 3, 4, 5, 6, 0].map((dayIdx) => {
+              const dayCfg = weeklySchedule[dayIdx] || DEFAULT_WEEKLY_SCHEDULE[dayIdx] || { enabled: true, time: '18:00', label: '練習' };
+              const isTodayDay = currentDayOfWeek === dayIdx;
+              const dayName = DAY_NAMES[dayIdx];
+              const isSun = dayIdx === 0;
+              const isSat = dayIdx === 6;
 
-                {todaySched.isOverride && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                    カレンダー個別設定
-                  </span>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* 7-day strip preview */}
-          <div className="grid grid-cols-7 gap-1 text-center pt-1">
-            {DAYS_OF_WEEK_META.map((meta) => {
-              const sched = (settings.weeklyNotificationSchedule || DEFAULT_WEEKLY_SCHEDULE)[meta.strKey] || {
-                enabled: true,
-                time: '16:00',
-              };
               return (
                 <div
-                  key={meta.strKey}
-                  className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                  key={dayIdx}
+                  className={`p-1.5 rounded-xl border text-center transition-all ${
+                    isTodayDay
+                      ? 'border-blue-500 bg-blue-500/10 dark:bg-blue-500/15 ring-2 ring-blue-500/30'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40'
+                  }`}
                 >
-                  <span className={`text-[11px] font-bold block ${meta.colorClass}`}>
-                    {meta.short}
+                  <span
+                    className={`text-[10px] font-black block ${
+                      isSun ? 'text-rose-500' : isSat ? 'text-sky-500' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {dayName}
                   </span>
-                  <span className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 block mt-0.5">
-                    {sched.enabled ? sched.time : 'OFF'}
+                  <span className="text-[9px] font-bold block mt-0.5 truncate text-slate-800 dark:text-slate-200">
+                    {dayCfg.enabled ? dayCfg.time : 'OFF'}
+                  </span>
+                  <span className="text-[8px] text-slate-400 block truncate">
+                    {dayCfg.enabled ? (dayCfg.label ? dayCfg.label.slice(0, 3) : '練習') : '休み'}
                   </span>
                 </div>
               );
             })}
           </div>
-
-          <p className="text-[10px] text-slate-400 dark:text-slate-500 pt-1">
-            ※通知時刻の変更や祝日・合宿などの特別設定は、下部の「管理者メニュー」から設定できます。
-          </p>
         </div>
-      )}
 
-      {/* Help & App Info Section */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
-        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-          <HelpCircle className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-          ヘルプとアプリ情報
-        </h3>
-        <div className="space-y-2">
-          <button
-            type="button"
-            id="btn-show-tutorial-again"
-            onClick={triggerTutorial}
-            className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">操作説明をもう一度見る</span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">アプリの使い方ガイドを表示します</span>
-              </div>
-            </div>
-            <ChevronDown className="w-4 h-4 text-slate-400 -rotate-90" />
-          </button>
-
-          <button
-            type="button"
-            onClick={triggerSplashScreen}
-            className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                <Smartphone className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-              </div>
-              <div>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-100 block">起動アニメーションを再生</span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">スプラッシュ画面を再表示します</span>
-              </div>
-            </div>
-            <ChevronDown className="w-4 h-4 text-slate-400 -rotate-90" />
-          </button>
-        </div>
-        <div className="pt-1 text-center border-t border-slate-100 dark:border-slate-800">
-          <p className="text-[10px] text-slate-400 dark:text-slate-500">
-            吹奏楽部 出欠連絡 v1.5.0
-          </p>
-        </div>
+        <p className="text-[10px] text-slate-400 dark:text-slate-500">
+          ※出欠確認時刻・曜日の変更は、下の管理者ログイン後に行えます。
+        </p>
       </div>
 
-      {/* 2. If already logged in as Admin, show Admin Dashboard */}
-      {isAdmin ? (
-        <div className="space-y-4">
-          {/* Admin Banner & Logout */}
-          <div className="bg-blue-900 text-white rounded-2xl p-4 shadow-md flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-blue-700 flex items-center justify-center text-white">
-                <Shield className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold flex items-center gap-1.5">
-                  管理者モード有効中
-                </h3>
-                <p className="text-[11px] text-blue-200">
-                  全設定の変更および連絡の削除が可能です
-                </p>
-              </div>
-            </div>
+      {/* 出欠連絡の定型文（連絡パターン）編集 */}
+      <AttendancePatternsEditor />
+
+      {/* Admin Login / Logout */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+            <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            管理者権限
+          </h2>
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+              isAdmin
+                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+            }`}
+          >
+            {isAdmin ? '管理者ログイン中' : '一般部員モード'}
+          </span>
+        </div>
+
+        {isAdmin ? (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              現在管理者としてログインしています。設定変更や部員管理が行えます。
+            </p>
             <button
-              id="btn-admin-logout"
+              type="button"
               onClick={logoutAdmin}
-              className="flex items-center gap-1 px-3 py-1.5 bg-blue-800 hover:bg-blue-700 text-white rounded-xl text-xs font-bold border border-blue-600 transition-colors"
+              className="w-full py-2 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
             >
-              <LogOut className="w-3.5 h-3.5" />
               管理者ログアウト
             </button>
           </div>
-
-          {/* Admin Section: Notification Schedule Manager (Per-Day & Calendar) */}
-          <NotificationScheduleManager />
-
-          {/* Admin Section: Club Name & Master Notification Switch */}
-          <div
-            id="admin-notification-settings"
-            className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4"
-          >
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Bell className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              部活動の基本設定・全体スイッチ
-            </h3>
+        ) : (
+          <form onSubmit={handleAdminLogin} className="space-y-2">
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              部活動名や、通知全体の緊急停止・マスターON/OFFを切り替えます
+              合言葉を入力して管理者ログインしてください（初期値: admin1234）
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={passcodeAttempt}
+                onChange={(e) => setPasscodeAttempt(e.target.value)}
+                placeholder="合言葉"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                ログイン
+              </button>
+            </div>
+            {passcodeError && (
+              <p className="text-xs text-red-500 font-bold mt-1">{passcodeError}</p>
+            )}
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 text-[11px] text-slate-500 dark:text-slate-400 space-y-1 mt-2">
+              <p className="flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
+                <Shield className="w-3.5 h-3.5 text-amber-500" />
+                <span>管理者専用メニューの保護</span>
+              </p>
+              <p>
+                LINE WORKS連携設定（Client ID / 秘密鍵 等）や部活全体設定は管理者専用です。合言葉を入力してログインすると設定画面が開きます（一般部員モードでは閲覧・変更できません）。
+              </p>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {/* ========================================================= */}
+      {/* ADMIN SECTIONS (Visible only to Admin) */}
+      {/* ========================================================= */}
+      {isAdmin && (
+        <div className="space-y-4">
+          {/* Section: Attendance Confirmation & Delivery Schedule Settings (出欠確認・配信スケジュール設定) */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                出欠確認・配信スケジュール設定（時間設定）
+              </h3>
+              <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-900">
+                管理者専用
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              毎日の出欠確認の基準時刻（日報まとめ配信時刻）や、曜日ごとの練習有無（OFF/休み）・個別時刻を詳細に設定できます。変更内容はFirestoreに即時保存され、部員全員の画面に反映されます。
             </p>
 
-            {settingsSaved && (
-              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>基本設定を保存しました</span>
+            {scheduleSavedMsg && (
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>{scheduleSavedMsg}</span>
               </div>
             )}
 
-            {settingsError && (
-              <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 rounded-xl text-xs flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
-                <span>{settingsError}</span>
+            <form onSubmit={handleSaveSchedule} className="space-y-4">
+              {/* 1. 基本時刻設定 */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    基本の出欠確認・日報送信時刻
+                  </label>
+                  <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">現在値: {summaryNotificationTime}</span>
+                </div>
+                <input
+                  type="time"
+                  value={summaryNotificationTime}
+                  onChange={(e) => setSummaryNotificationTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  ※出欠確認の基本時刻です。曜日別設定が有効な曜日は、そちらの個別時刻が優先されます。
+                </p>
+              </div>
+
+              {/* 2. 曜日別スケジュール設定 */}
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <CalendarDays className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                      曜日別の出欠確認・練習スケジュール（月〜日）
+                    </label>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                      各曜日の活動有無（OFF/休み）や個別の出欠確認時刻を設定します
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={handleApplyBaseTimeToAllDays}
+                      className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 px-2 py-1 rounded-lg border border-blue-200 dark:border-blue-900 cursor-pointer"
+                      title="基本時刻を全曜日に一括反映"
+                    >
+                      基本時刻を一括反映
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetWeeklyScheduleToDefault}
+                      className="text-[10px] font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer"
+                      title="初期設定に戻す"
+                    >
+                      初期化
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  {[1, 2, 3, 4, 5, 6, 0].map((dayIdx) => {
+                    const sched = weeklySchedule[dayIdx] || DEFAULT_WEEKLY_SCHEDULE[dayIdx] || { enabled: true, time: '18:00', label: '放課後練習' };
+                    const dayName = DAY_NAMES[dayIdx];
+                    const dayFullName = DAY_FULL_NAMES[dayIdx];
+                    const isSun = dayIdx === 0;
+                    const isSat = dayIdx === 6;
+
+                    return (
+                      <div
+                        key={dayIdx}
+                        className={`p-2.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-colors ${
+                          sched.enabled
+                            ? 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/80'
+                            : 'bg-slate-100/60 dark:bg-slate-900/60 border-slate-200/60 dark:border-slate-800/60 opacity-75'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
+                              isSun
+                                ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900'
+                                : isSat
+                                ? 'bg-sky-100 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-900'
+                                : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {dayName}
+                          </span>
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                              {dayFullName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block">
+                              {sched.enabled ? '活動日（出欠確認あり）' : 'OFF / 休み（出欠なし）'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-auto">
+                          {/* Activity Label Input */}
+                          <input
+                            type="text"
+                            value={sched.label || ''}
+                            onChange={(e) => handleWeeklyDayChange(dayIdx, 'label', e.target.value)}
+                            placeholder={sched.enabled ? '区分 (例: 放課後練習)' : 'OFF / 休み'}
+                            className="w-28 sm:w-32 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200 font-medium"
+                          />
+
+                          {/* Time Input (only active if enabled) */}
+                          <input
+                            type="time"
+                            value={sched.time || summaryNotificationTime || '18:00'}
+                            disabled={!sched.enabled}
+                            onChange={(e) => handleWeeklyDayChange(dayIdx, 'time', e.target.value)}
+                            className="w-24 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-bold text-slate-800 dark:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                          />
+
+                          {/* Enabled / Disabled Toggle */}
+                          <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={sched.enabled}
+                              onChange={(e) => handleWeeklyDayChange(dayIdx, 'enabled', e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+
+              {/* Save Button */}
+              <button
+                type="submit"
+                disabled={scheduleSaving}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {scheduleSaving ? '設定を保存中...' : '出欠確認・配信スケジュール設定（時間設定）を保存'}
+              </button>
+            </form>
+          </div>
+
+          {/* Section: General Settings */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                部活全体設定
+              </h3>
+              <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-900">
+                管理者専用
+              </span>
+            </div>
+
+            {saveSuccessMsg && (
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{saveSuccessMsg}</span>
               </div>
             )}
 
-            <form onSubmit={handleSaveNotificationSettings} className="space-y-4">
+            <form onSubmit={handleSaveGeneral} className="space-y-3">
               <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
+                <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   部活動名
                 </label>
                 <input
                   type="text"
-                  id="input-admin-club-name"
                   value={clubName}
                   onChange={(e) => setClubName(e.target.value)}
-                  placeholder="例: サッカー部、吹奏楽部"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="例: 吹奏楽部"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 font-medium"
+                  required
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
-                  まとめ通知の基本配信時刻
+                <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  基本の出欠確認・日報まとめ送信時刻
                 </label>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <TimePulldown
-                    value={notificationTime}
-                    onChange={setNotificationTime}
-                  />
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    ※各曜日の個別設定がない場合、この時刻に配信されます
-                  </p>
-                </div>
+                <input
+                  type="time"
+                  value={summaryNotificationTime}
+                  onChange={(e) => setSummaryNotificationTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 font-medium"
+                />
+                <span className="text-[10px] text-slate-400 block mt-1">
+                  ※曜日ごとの詳細スケジュール設定は上の「出欠確認・配信スケジュール設定」から設定できます。
+                </span>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-2">
-                  罰ゲームの段階設定（累積スタンプ数）
-                </label>
-                <div className="space-y-2">
-                  {[...penaltyStages]
-                    .sort((a, b) => a.threshold - b.threshold)
-                    .map((stage, idx) => (
-                      <div key={`penalty-stage-${idx}`} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={stage.threshold}
-                            onChange={(e) => {
-                              let value = e.target.value;
-                              // 全角数字を半角に変換
-                              value = value.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-                              // 数字以外を削除
-                              value = value.replace(/[^0-9]/g, '');
-                              // 先頭の0を削除（ただし空文字や"0"そのものは許容しつつ、変換時に考慮）
-                              if (value.length > 1 && value.startsWith('0')) {
-                                value = value.replace(/^0+/, '');
-                              }
-                              
-                              const finalValue = value === '' ? 0 : parseInt(value, 10);
-                              setPenaltyStages(prev => prev.map(s => s === stage ? { ...s, threshold: finalValue } : s));
-                            }}
-                            className="w-14 px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-center font-bold bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                          <span className="text-[10px] text-slate-500 font-bold">個</span>
-                        </div>
-                        <div className="flex-1 flex flex-col gap-1.5">
-                          <input
-                            type="text"
-                            value={stage.label || ''}
-                            onChange={(e) => {
-                              const newLabel = e.target.value;
-                              setPenaltyStages(prev => prev.map(s => s === stage ? { ...s, label: newLabel } : s));
-                            }}
-                            placeholder="罰の名前 (例: 小罰)"
-                            className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                          <input
-                            type="text"
-                            value={stage.description || ''}
-                            onChange={(e) => {
-                              const newDesc = e.target.value;
-                              setPenaltyStages(prev => prev.map(s => s === stage ? { ...s, description: newDesc } : s));
-                            }}
-                            placeholder="内容 (例: 楽器庫の掃除)"
-                            className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[10px] bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (window.confirm('この段階を削除しますか？')) {
-                              setPenaltyStages(prev => prev.filter(s => s !== stage));
-                            }
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
-                          title="削除"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const maxThreshold = penaltyStages.length > 0 ? Math.max(...penaltyStages.map(s => s.threshold)) : 0;
-                      setPenaltyStages(prev => [...prev, { threshold: maxThreshold + 1, label: '', description: '' }]);
-                    }}
-                    className="w-full py-2 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-xs font-bold"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ 段階を追加する</span>
-                  </button>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                    鍵状態の深夜自動リセット（0:00 JST）
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                    日付が変わると鍵の施錠状態を自動で未施錠にリセットします
+                  </span>
                 </div>
-                <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                  緊急遽刻の累積スタンプが各個数に達するごとに、その段階の罰ゲームが開放されます。
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      まとめ通知機能の全体有効化
-                    </span>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
-                      OFFにすると、曜日別およびカレンダー設定のすべての配信が一時停止されます
-                    </span>
-                  </div>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
                   <input
                     type="checkbox"
-                    id="checkbox-notifications-enabled"
-                    checked={notificationsEnabled}
-                    onChange={(e) => setNotificationsEnabled(e.target.checked)}
+                    checked={autoResetKeys}
+                    onChange={(e) => setAutoResetKeys(e.target.checked)}
                     className="sr-only peer"
                   />
                   <div className="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -2184,1011 +1263,106 @@ export const SettingsScreen: React.FC = () => {
 
               <button
                 type="submit"
-                id="btn-save-notification-settings"
                 disabled={isSaving}
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-600 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
+                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                {isSaving ? '保存中...' : '部活動名・全体設定を保存'}
+                全体設定を保存する
               </button>
             </form>
-          </div>
 
-          {/* Admin Section: LINE WORKS Integration */}
-          <div
-            id="admin-lineworks-settings"
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-4"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                    <MessageSquare className="w-4 h-4 text-emerald-600" />
-                    LINE WORKS 連携設定（Bot自動通知）
-                  </h3>
-                  {settings.lineWorks?.enabled && (settings.lineWorks?.webhookUrl || (settings.lineWorks?.clientId && settings.lineWorks?.botId)) ? (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                      {settings.lineWorks.mode === 'api2' ? 'API 2.0 連携中' : 'Webhook 連携中'}
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
-                      未連携
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  当日の出欠サマリーや遅刻連絡を、LINE WORKSのグループトークへBotが自動投稿します
-                </p>
-              </div>
-            </div>
-
-            {/* Quick action: One-tap copy & share for LINE WORKS */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-4 mb-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Globe className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                  環境変数の設定状況 (サーバー側)
-                </h4>
-                <span className="text-[10px] font-bold text-slate-400">
-                  {isProduction ? 'Production モード' : 'Development モード'}
-                </span>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[
-                  { key: 'LINEWORKS_CLIENT_ID', label: 'Client ID' },
-                  { key: 'LINEWORKS_CLIENT_SECRET', label: 'Client Secret' },
-                  { key: 'LINEWORKS_SERVICE_ACCOUNT', label: 'Service Account' },
-                  { key: 'LINEWORKS_PRIVATE_KEY', label: 'Private Key' },
-                  { key: 'LINEWORKS_BOT_ID', label: 'Bot ID' },
-                  { key: 'LINEWORKS_CHANNEL_ID', label: 'Channel ID (Default)' },
-                ].map((v) => (
-                  <div key={v.key} className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
-                    <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{v.label}</span>
-                    {envVarsStatus[v.key] ? (
-                      <span className="flex items-center gap-1 text-[10px] font-black text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="w-3 h-3" />
-                        設定済み
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-[10px] font-bold text-slate-300 dark:text-slate-600">
-                        <X className="w-3 h-3" />
-                        未設定
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {Object.values(envVarsStatus).some(v => !v) && (
-                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900 rounded-xl">
-                  <p className="text-[10px] font-bold text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    一部の環境変数が設定されていません。Vercel等の管理画面で設定するか、下の入力欄に直接入力して保存してください。
-                  </p>
+            {/* Admin Passcode Update Form */}
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <Lock className="w-3.5 h-3.5 text-amber-500" />
+                管理者合言葉の変更
+              </label>
+              {passcodeChangeMsg && (
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg text-xs flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{passcodeChangeMsg}</span>
                 </div>
               )}
-              <p className="text-[10px] text-slate-400 leading-relaxed">
-                ※ Vercel等の環境変数で設定されている場合、下の入力欄が空でもそちらが優先的に使用されます。
-              </p>
-            </div>
-
-            <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-                  <Share2 className="w-3.5 h-3.5 text-emerald-600" />
-                  本日の出欠サマリーを手動でLINE WORKSに共有
-                </span>
-                {copiedSummary && (
-                  <span className="text-[10px] font-bold text-emerald-700 flex items-center gap-1 bg-white px-2 py-0.5 rounded-full border border-emerald-300">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                    コピー完了！
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-emerald-800 leading-relaxed">
-                Botの登録前や今すぐ手動で共有したい時は、整形済みのテキストをワンタップでコピーしてLINE WORKSに貼り付けできます。
-              </p>
-              <button
-                type="button"
-                id="btn-copy-summary-lineworks"
-                onClick={handleCopySummaryForLineWorks}
-                className="w-full py-2 px-3 bg-white hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-lg border border-emerald-300 shadow-2xs transition-colors flex items-center justify-center gap-1.5"
-              >
-                <Copy className="w-3.5 h-3.5 text-emerald-600" />
-                本日の出欠テキストをクリップボードにコピー
-              </button>
-            </div>
-
-            {/* Last Status Section */}
-            <div className="space-y-2">
-              <LastTransmissionStatus 
-                status={settings.lastLwStatus} 
-                botName="出欠連絡用" 
-                onClear={() => updateSettings({ lastLwStatus: undefined })}
-              />
-            </div>
-
-            {/* Save notification */}
-            {lwSettingsSaved && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>LINE WORKS設定を保存しました</span>
-              </div>
-            )}
-
-            {/* Test result feedback */}
-            {lwTestResult && (
-              <div
-                className={`p-3 rounded-xl text-xs flex items-start gap-2 border ${
-                  lwTestResult.type === 'success'
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : 'bg-red-50 border-red-200 text-red-700'
-                }`}
-              >
-                {lwTestResult.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                )}
-                <div className="space-y-0.5">
-                  <span className="font-bold block">
-                    {lwTestResult.type === 'success' ? '完了' : 'エラー'}
-                  </span>
-                  <p className="text-[11px] leading-relaxed whitespace-pre-line">{lwTestResult.message}</p>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveLineWorksSettings} className="space-y-4">
-              {/* Enable Toggle */}
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <div>
-                  <span className="text-xs font-bold text-slate-800 block">
-                    LINE WORKS連携（Bot通知）を有効にする
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    Bot経由での自動メッセージ送信を許可します
-                  </span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    id="checkbox-lineworks-enabled"
-                    checked={lwEnabled}
-                    onChange={(e) => setLwEnabled(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-              </div>
-
-              {/* Mode Selector (API 2.0 vs Webhook) */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 block">
-                  連携方式を選択
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    id="btn-mode-api2"
-                    onClick={() => setLwMode('api2')}
-                    className={`p-3 rounded-xl border text-left transition-all ${
-                      lwMode === 'api2'
-                        ? 'border-emerald-600 bg-emerald-50/50 ring-1 ring-emerald-500'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
-                        API 2.0 (推奨)
-                      </span>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                        無料版対応
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 leading-normal">
-                      無料プランでも利用可能。LINE WORKS Developer Consoleの認証キーで直接Bot送信します。
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-mode-webhook"
-                    onClick={() => setLwMode('webhook')}
-                    className={`p-3 rounded-xl border text-left transition-all ${
-                      lwMode === 'webhook'
-                        ? 'border-emerald-600 bg-emerald-50/50 ring-1 ring-emerald-500'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <Bot className="w-3.5 h-3.5 text-blue-600" />
-                        Webhook URL
-                      </span>
-                      <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                        有料版のみ
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 leading-normal">
-                      Incoming WebhookのURLを指定して送信します（有料プランまたはWebhook対応環境用）。
-                    </p>
-                  </button>
-                </div>
-              </div>
-
-              {/* Guide Accordion Toggle */}
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-xs font-bold text-slate-700">
-                  {lwMode === 'api2' ? 'API 2.0 接続設定' : 'Webhook接続設定'}
-                </span>
-                <button
-                  type="button"
-                  id="btn-toggle-lw-guide"
-                  onClick={() => setShowLwGuide(!showLwGuide)}
-                  className="text-[11px] text-blue-600 hover:text-blue-800 flex items-center gap-1 font-semibold"
-                >
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  <span>{showLwGuide ? '手順を閉じる' : '設定手順・キー取得方法を確認'}</span>
-                </button>
-              </div>
-
-              {/* Guide Accordion */}
-              {showLwGuide && (
-                <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl text-xs space-y-3 text-slate-700">
-                  {lwMode === 'api2' ? (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-bold text-blue-900 flex items-center gap-1.5 text-xs">
-                          <Bot className="w-3.5 h-3.5 text-blue-600" />
-                          LINE WORKS API 2.0 の無料プラン設定手順（約3分）
-                        </h4>
-                        <a
-                          href="https://developers.worksmobile.com/jp/console/openapi/v2/app/list/view"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] text-blue-700 underline flex items-center gap-1 font-medium"
-                        >
-                          Developer Console <ExternalLink className="w-3 h-3" />
-                        </a>
-                      </div>
-                      <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed text-slate-700">
-                        <li>
-                          LINE WORKS <strong>Developer Console</strong> に管理者アカウントでログインします。
-                        </li>
-                        <li>
-                          「<strong>API 2.0</strong>」→「<strong>アプリ</strong>」から「<strong>アプリの新規追加</strong>」をクリック。アプリ名（例: 部活出欠アプリ）を入力します。
-                        </li>
-                        <li>
-                          <strong>OAuth Scopes</strong> の「管理」を押し、<code className="bg-white px-1 py-0.5 rounded border border-blue-200 font-mono text-[10px]">bot</code> または <code className="bg-white px-1 py-0.5 rounded border border-blue-200 font-mono text-[10px]">bot.message</code> にチェックを入れ保存します。
-                        </li>
-                        <li>
-                          <strong>Client ID</strong> と <strong>Client Secret</strong>（発行）をコピーして下記の入力欄に貼り付けます。
-                        </li>
-                        <li>
-                          <strong>Service Account</strong> を「発行」し、表示されたアドレス（例: sa-...@...）を貼り付けます。
-                        </li>
-                        <li>
-                          <strong>Private Key</strong> を「発行/ダウンロード」し、ファイルの中身（<code className="text-[10px] font-mono">-----BEGIN PRIVATE KEY-----...</code>）をすべてコピーして貼り付けます。
-                        </li>
-                        <li>
-                          左メニュー「<strong>Bot</strong>」からBotを作成し（または既存Bot）、トークルーム（グループ）にBotを招待します。そのBotの<strong>Bot ID</strong>とグループトークの<strong>Channel ID</strong>を記入してください。
-                        </li>
-                      </ol>
-                    </>
-                  ) : (
-                    <>
-                      <h4 className="font-bold text-blue-900 flex items-center gap-1.5 text-xs">
-                        <Bot className="w-3.5 h-3.5 text-blue-600" />
-                        LINE WORKS Webhook URL の設定手順
-                      </h4>
-                      <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed text-slate-700">
-                        <li>LINE WORKSの管理者またはトークルームを開きます。</li>
-                        <li>
-                          <strong>Developer Console</strong> またはトークルーム設定から「<strong>Bot</strong>」を新規登録し、通知を送りたいグループトークルームに招待します。
-                        </li>
-                        <li>
-                          Botの「<strong>Incoming Webhook</strong>」または「<strong>メッセージ送信URL</strong>」を発行します。
-                        </li>
-                        <li>
-                          発行された <code className="bg-white px-1 py-0.5 rounded border border-blue-200 font-mono text-[10px]">https://...</code> のURLをコピーして下記の入力欄に貼り付けます。
-                        </li>
-                      </ol>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Mode: API 2.0 Form Fields */}
-              {lwMode === 'api2' ? (
-                <div className="space-y-3 p-3 bg-slate-50/80 rounded-xl border border-slate-200">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                        Client ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        id="input-lineworks-clientid"
-                        value={lwClientId}
-                        onChange={(e) => setLwClientId(e.target.value)}
-                        placeholder="例: w1234abcd..."
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                        Client Secret <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="password"
-                        id="input-lineworks-clientsecret"
-                        value={lwClientSecret}
-                        onChange={(e) => setLwClientSecret(e.target.value)}
-                        placeholder="••••••••••••••••"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                      Service Account <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      id="input-lineworks-serviceaccount"
-                      value={lwServiceAccount}
-                      onChange={(e) => setLwServiceAccount(e.target.value)}
-                      placeholder="例: sa_12345678@example.worksmobile.com"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                      Private Key (秘密鍵) <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      id="textarea-lineworks-privatekey"
-                      rows={3}
-                      value={lwPrivateKey}
-                      onChange={(e) => setLwPrivateKey(e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----&#10;MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...&#10;-----END PRIVATE KEY-----"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-[11px] text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono leading-tight"
-                    />
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      ダウンロードした秘密鍵ファイルの「-----BEGIN PRIVATE KEY-----」から末尾までを貼り付けます
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                        Bot ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        id="input-lineworks-botid"
-                        value={lwBotId}
-                        onChange={(e) => setLwBotId(e.target.value)}
-                        placeholder="例: 1234567"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                        Channel ID (送信先トークルーム) <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        id="input-lineworks-channelid"
-                        value={lwChannelId}
-                        onChange={(e) => setLwChannelId(e.target.value)}
-                        placeholder="例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className={`w-full px-3 py-2 rounded-lg border text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${
-                          lwChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwChannelId.trim()) && !lwChannelId.trim().startsWith('c_')
-                            ? 'border-amber-400 bg-amber-50/30'
-                            : 'border-slate-200'
-                        }`}
-                      />
-                      {lwChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwChannelId.trim()) && !lwChannelId.trim().startsWith('c_') && (
-                        <p className="text-[9px] text-amber-600 mt-0.5 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          形式が UUID ではないようです（通常は 8-4-4-4-12 文字）
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      id="btn-verify-lw-auth"
-                      onClick={handleVerifyLineWorksAuth}
-                      disabled={lwVerifyingAuth}
-                      className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
-                      {lwVerifyingAuth ? '認証確認中...' : '認証キーのみ接続テスト（トークン発行確認）'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Mode: Webhook Input */
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    Bot Webhook URL <span className="text-red-500 font-normal">*</span>
-                  </label>
-                  <input
-                    type="url"
-                    id="input-lineworks-webhook"
-                    value={lwWebhookUrl}
-                    onChange={(e) => setLwWebhookUrl(e.target.value)}
-                    placeholder="https://wh.worksmobile.com/... または Botエンドポイント"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                  />
-                  <p className="text-[10px] text-slate-400">
-                    LINE WORKSのトークルームBotまたはIncoming WebhookのURLを入力してください
-                  </p>
-                </div>
-              )}
-
-              {/* Bot Name */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  通知タイトル内のBot名（任意）
-                </label>
+              <form onSubmit={handleChangePasscode} className="flex gap-2">
                 <input
-                  type="text"
-                  id="input-lineworks-botname"
-                  value={lwBotName}
-                  onChange={(e) => setLwBotName(e.target.value)}
-                  placeholder="例: 部活出欠bot"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  type="password"
+                  value={newPasscodeInput}
+                  onChange={(e) => setNewPasscodeInput(e.target.value)}
+                  placeholder="新しい合言葉を入力"
+                  className="flex-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
-              </div>
-
-              {/* Notification Triggers */}
-              <div className="space-y-2 pt-1">
-                <span className="text-xs font-bold text-slate-700 block">
-                  送信トリガー
-                </span>
-                
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer text-xs">
-                  <input
-                    type="checkbox"
-                    id="checkbox-lw-summary"
-                    checked={lwSendSummary}
-                    onChange={(e) => setLwSendSummary(e.target.checked)}
-                    className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                  />
-                  <div>
-                    <span className="font-bold text-slate-800 block">
-                      まとめ時刻（{notificationTime}）に当日の出席状況を自動送信
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      欠席者・遅刻者・出席人数・未連絡者一覧をまとめて投稿します
-                    </span>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer text-xs">
-                  <input
-                    type="checkbox"
-                    id="checkbox-lw-tardy"
-                    checked={lwSendTardy}
-                    onChange={(e) => setLwSendTardy(e.target.checked)}
-                    className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                  />
-                  <div>
-                    <span className="font-bold text-slate-800 block">
-                      当日の【緊急遽刻】連絡を受信した時に即時送信
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      「🚨〇〇さんが△時ごろ緊急遽刻します」をリアルタイムに速報投稿します（通常の遅刻はまとめ時刻に集約）
-                    </span>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer text-xs">
-                  <input
-                    type="checkbox"
-                    id="checkbox-lw-event-reminder"
-                    checked={lwSendEventReminder}
-                    onChange={(e) => setLwSendEventReminder(e.target.checked)}
-                    className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                  />
-                  <div>
-                    <span className="font-bold text-slate-800 block">
-                      イベントのリマインダー（3日前・前日・当日）を自動送信
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      イベント（コンクール・本番等）の開催が近づくと、トークルームへリマインドを投稿します。
-                      <strong>（※専用のBotを使いたい場合は、下の「イベント専用」設定を使用してください）</strong>
-                    </span>
-                  </div>
-                </label>
-              </div>
-
-              {/* Buttons */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
                 <button
                   type="submit"
-                  id="btn-save-lineworks-settings"
-                  disabled={isSaving}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
+                  disabled={!newPasscodeInput.trim()}
+                  className="px-3 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shrink-0"
                 >
-                  <Check className="w-4 h-4" />
-                  {isSaving ? '保存中...' : 'LINE WORKS設定を保存'}
+                  合言葉を変更
                 </button>
-
-                <button
-                  type="button"
-                  id="btn-test-lineworks-send"
-                  onClick={handleTestLineWorks}
-                  disabled={lwTesting}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  {lwTesting ? 'LINE WORKSへ送信中...' : '出欠サマリーをテスト送信'}
-                </button>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
 
-            {/* Admin Section: LINE WORKS Key Reminder Settings (鍵催促専用) */}
-            <div
-              id="admin-lineworks-kr-settings"
-              className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  【鍵催促専用】LINE WORKS 連携設定
-                </h3>
-                <span className="text-[10px] font-bold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
-                  管理者専用
-                </span>
-              </div>
-              
-              <LastTransmissionStatus 
-                status={settings.lastLwKRStatus} 
-                botName="鍵催促用" 
-                onClear={() => updateSettings({ lastLwKRStatus: undefined })}
-              />
-              
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                出欠連絡用の連携とは別に、鍵の催促通知だけを別のトークルームやBotに送信したい場合に設定します。
-              </p>
-
-              {lwKRSettingsSaved && (
-                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>鍵催促用のLINE WORKS連携設定を保存しました</span>
-                </div>
-              )}
-
-              {lwKRTestResult && (
-                <div
-                  className={`p-2.5 border rounded-xl text-xs flex items-start gap-2 ${
-                    lwKRTestResult.type === 'success'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300'
-                  }`}
-                >
-                  {lwKRTestResult.type === 'success' ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  ) : (
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  )}
-                  <span>{lwKRTestResult.message}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSaveLineWorksKeyReminderSettings} className="space-y-4">
-                <div className="space-y-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Client ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwKRClientId}
-                        onChange={(e) => setLwKRClientId(e.target.value)}
-                        placeholder="例: u4m12345..."
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Client Secret <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="password"
-                        value={lwKRClientSecret}
-                        onChange={(e) => setLwKRClientSecret(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Service Account <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={lwKRServiceAccount}
-                      onChange={(e) => setLwKRServiceAccount(e.target.value)}
-                      placeholder="例: sa_12345678@example.worksmobile.com"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Private Key (秘密鍵) <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={lwKRPrivateKey}
-                      onChange={(e) => setLwKRPrivateKey(e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono leading-tight"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Bot ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwKRBotId}
-                        onChange={(e) => setLwKRBotId(e.target.value)}
-                        placeholder="例: 1234567"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Channel ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwKRChannelId}
-                        onChange={(e) => setLwKRChannelId(e.target.value)}
-                        placeholder="例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className={`w-full px-3 py-2 rounded-lg border text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono ${
-                          lwKRChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwKRChannelId.trim()) && !lwKRChannelId.trim().startsWith('c_')
-                            ? 'border-amber-400 bg-amber-50/30'
-                            : 'border-slate-200 dark:border-slate-700'
-                        }`}
-                      />
-                      {lwKRChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwKRChannelId.trim()) && !lwKRChannelId.trim().startsWith('c_') && (
-                        <p className="text-[9px] text-amber-600 mt-0.5 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          形式が UUID ではないようです（通常は 8-4-4-4-12 文字）
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={handleVerifyLineWorksKRAuth}
-                      disabled={lwKRVerifyingAuth}
-                      className="w-full py-2 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                      {lwKRVerifyingAuth ? '認証確認中...' : '認証キーのみ接続テスト（トークン発行確認）'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Check className="w-4 h-4" />
-                    {isSaving ? '保存中...' : '鍵催促用設定を保存'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTestLineWorksKR}
-                    disabled={lwKRTesting}
-                    className="w-full py-2.5 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 disabled:bg-slate-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    {lwKRTesting ? '送信中...' : 'テスト催促をLINE WORKSへ送信'}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Admin Section: LINE WORKS Event Reminder Settings (イベント専用) */}
-            <div
-              id="admin-lineworks-ev-settings"
-              className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                  【イベント専用】LINE WORKS 連携設定
-                </h3>
-                <span className="text-[10px] font-bold bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                  管理者専用
-                </span>
-              </div>
-
-              <LastTransmissionStatus 
-                status={settings.lastLwEvStatus} 
-                botName="イベント用" 
-                onClear={() => updateSettings({ lastLwEvStatus: undefined })}
-              />
-
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                出欠連絡用とは別のBotを使って、コンクールや本番等のイベントリマインドのみを別のトークルームに送信したい場合に設定します。
-              </p>
-
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800">
-                <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                    イベント専用Bot連携を有効にする
-                  </span>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
-                    有効にすると、イベントリマインドはこちらの設定を使用して送信されます
-                  </span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={lwEvEnabled}
-                    onChange={(e) => setLwEvEnabled(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                </label>
-              </div>
-
-              {lwEvSettingsSaved && (
-                <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>イベント用のLINE WORKS連携設定を保存しました</span>
-                </div>
-              )}
-
-              {lwEvTestResult && (
-                <div
-                  className={`p-2.5 border rounded-xl text-xs flex items-start gap-2 ${
-                    lwEvTestResult.type === 'success'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300'
-                  }`}
-                >
-                  {lwEvTestResult.type === 'success' ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  ) : (
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  )}
-                  <span>{lwEvTestResult.message}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSaveLineWorksEventsSettings} className="space-y-4">
-                <div className="space-y-3 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Client ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwEvClientId}
-                        onChange={(e) => setLwEvClientId(e.target.value)}
-                        placeholder="例: w1234abcd..."
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Client Secret <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="password"
-                        value={lwEvClientSecret}
-                        onChange={(e) => setLwEvClientSecret(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Service Account <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={lwEvServiceAccount}
-                      onChange={(e) => setLwEvServiceAccount(e.target.value)}
-                      placeholder="例: sa_12345678@example.worksmobile.com"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                      Private Key (秘密鍵) <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={lwEvPrivateKey}
-                      onChange={(e) => setLwEvPrivateKey(e.target.value)}
-                      placeholder="-----BEGIN PRIVATE KEY-----"
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono leading-tight"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Bot ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwEvBotId}
-                        onChange={(e) => setLwEvBotId(e.target.value)}
-                        placeholder="例: 1234567"
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                        Channel ID <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={lwEvChannelId}
-                        onChange={(e) => setLwEvChannelId(e.target.value)}
-                        placeholder="例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className={`w-full px-3 py-2 rounded-lg border text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${
-                          lwEvChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwEvChannelId.trim()) && !lwEvChannelId.trim().startsWith('c_')
-                            ? 'border-amber-400 bg-amber-50/30'
-                            : 'border-slate-200 dark:border-slate-700'
-                        }`}
-                      />
-                      {lwEvChannelId.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lwEvChannelId.trim()) && !lwEvChannelId.trim().startsWith('c_') && (
-                        <p className="text-[9px] text-amber-600 mt-0.5 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-2.5 h-2.5" />
-                          形式が UUID ではないようです（通常は 8-4-4-4-12 文字）
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-1">
-                    <button
-                      type="button"
-                      onClick={handleVerifyLineWorksEventsAuth}
-                      disabled={lwEvVerifyingAuth || !lwEvClientId || !lwEvClientSecret || !lwEvServiceAccount || !lwEvPrivateKey}
-                      className="w-full py-2 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-indigo-900/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 font-bold rounded-lg text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                      {lwEvVerifyingAuth ? '認証確認中...' : '認証キーのみ接続テスト（トークン発行確認）'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Check className="w-4 h-4" />
-                    {isSaving ? '保存中...' : 'イベント用設定を保存'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleTestLineWorksEvents}
-                    disabled={lwEvTesting}
-                    className="w-full py-2.5 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 disabled:bg-slate-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    {lwEvTesting ? '送信中...' : 'テスト通知をLINE WORKSへ送信'}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Admin Section: Key Names Settings (2鍵対応) */}
-          <div
-            id="admin-key-names-settings"
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3"
-          >
+          {/* Section: Key Names Settings */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Key className="w-4 h-4 text-blue-600" />
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Key className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                 部室の鍵の名前設定（2鍵対応）
               </h3>
-              <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+              <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-900">
                 管理者専用
               </span>
             </div>
-            <p className="text-xs text-slate-500">
-              ホーム画面の「鍵の報告」カードに表示される2つの鍵の名前を変更できます。（初期値: 「鍵①」「鍵②」）
-            </p>
 
             {keyNamesSaved && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center gap-1.5">
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>鍵の名前を保存しました。ホーム画面に即時反映されます。</span>
+                <span>鍵の名前を保存しました。</span>
               </div>
             )}
 
             <form onSubmit={handleSaveKeyNames} className="space-y-3">
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   鍵① の名前
                 </label>
                 <input
                   type="text"
-                  id="input-key1-name"
                   value={key1NameInput}
                   onChange={(e) => setKey1NameInput(e.target.value)}
                   placeholder="例: 鍵①（正面玄関）"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                   required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   鍵② の名前
                 </label>
                 <input
                   type="text"
-                  id="input-key2-name"
                   value={key2NameInput}
                   onChange={(e) => setKey2NameInput(e.target.value)}
                   placeholder="例: 鍵②（楽器庫）"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                   required
                 />
               </div>
 
               <button
                 type="submit"
-                id="btn-save-key-names"
                 disabled={isSaving}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-xs shadow-xs transition-colors flex items-center justify-center gap-1.5"
+                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                <Check className="w-3.5 h-3.5" />
-                {isSaving ? '保存中...' : '鍵の名前を保存する'}
+                鍵の名前を保存する
               </button>
             </form>
           </div>
 
-          {/* Admin Section: Key Reminders Settings (鍵の催促通知設定) */}
-          <div
-            id="admin-key-reminders-settings"
-            className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4"
-          >
+          {/* Section: Key Reminders Settings (【鍵催促通知設定】) */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                 <BellRing className="w-4 h-4 text-amber-600" />
                 鍵の催促通知設定（閉め忘れ防止）
               </h3>
@@ -3196,6 +1370,7 @@ export const SettingsScreen: React.FC = () => {
                 管理者専用
               </span>
             </div>
+
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
               設定した時刻になっても施錠報告がない場合、自動で部員全員へ催促通知を送信します。
               どちらか一方でも未報告であれば通知され、両方報告されると自動で停止します。
@@ -3203,706 +1378,885 @@ export const SettingsScreen: React.FC = () => {
 
             {keyRemindersSaved && (
               <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>鍵の催促設定を保存しました。設定時刻に合わせて自動監視されます。</span>
-              </div>
-            )}
-
-            {settingsError && (
-              <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-800 dark:text-red-300 rounded-xl text-xs flex items-start gap-2">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-                <span>{settingsError}</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>鍵の催促設定を保存しました。Firestoreに即時保存され、次回起動時も維持されます。</span>
               </div>
             )}
 
             {testReminderToast && (
-              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+              <div className="p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-blue-800 dark:text-blue-300 rounded-xl text-xs flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 <span>{testReminderToast}</span>
               </div>
             )}
 
-            <form onSubmit={handleSaveKeyReminders} className="space-y-4">
-              <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    鍵の催促機能を有効にする
-                  </span>
+            {/* Main Toggle Switch */}
+            <div className="p-3.5 bg-amber-50/50 dark:bg-amber-950/20 rounded-xl border border-amber-200/80 dark:border-amber-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                  鍵の催促機能を有効にする
+                </span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                  ONにすると、指定時刻に未施錠の鍵がある場合に自動催促します
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={keyReminderEnabled}
+                  onChange={(e) => handleToggleKeyReminder(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+              </label>
+            </div>
+
+            {keyReminderEnabled && (
+              <div className="space-y-3 pt-1">
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      催促開始時刻
+                    </label>
+                    <input
+                      type="time"
+                      value={keyReminderStartTime}
+                      onChange={(e) => setKeyReminderStartTime(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 font-medium"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      催促を送る間隔
+                    </label>
+                    <select
+                      value={keyReminderInterval}
+                      onChange={(e) => setKeyReminderInterval(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 font-medium"
+                    >
+                      <option value={10}>10分おき</option>
+                      <option value={15}>15分おき（推奨）</option>
+                      <option value={20}>20分おき</option>
+                      <option value={30}>30分おき</option>
+                      <option value={45}>45分おき</option>
+                      <option value={60}>60分おき（1時間）</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      最大催促回数
+                    </label>
+                    <select
+                      value={keyReminderMaxCount}
+                      onChange={(e) => setKeyReminderMaxCount(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 font-medium"
+                    >
+                      <option value={1}>1回のみ</option>
+                      <option value={2}>2回まで</option>
+                      <option value={3}>3回まで</option>
+                      <option value={4}>4回まで</option>
+                      <option value={5}>5回まで</option>
+                      <option value={10}>10回まで</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Sub Options */}
+                <div className="space-y-2 pt-1 text-xs">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-                      {keyReminderEnabled ? '有効' : '無効'}
-                    </span>
                     <input
                       type="checkbox"
-                      id="checkbox-key-reminder-enabled"
-                      checked={keyReminderEnabled}
-                      onChange={(e) => setKeyReminderEnabled(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                      checked={keyReminderMidnightSuppression}
+                      onChange={(e) => setKeyReminderMidnightSuppression(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
                     />
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      深夜・早朝（0:00〜6:00 JST）は通知を自動制限する
+                    </span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={keyReminderAppNotif}
+                      onChange={(e) => setKeyReminderAppNotif(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      アプリ内通知（プッシュ・通知タブ）を送信する
+                    </span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={keyReminderLwNotif}
+                      onChange={(e) => setKeyReminderLwNotif(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="font-medium text-slate-700 dark:text-slate-300">
+                      LINE WORKSへも催促メッセージを投稿する
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center pt-2">
+              <button
+                type="button"
+                onClick={handleSendTestKeyReminder}
+                className="text-[11px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <BellRing className="w-3.5 h-3.5" />
+                テスト催促通知を1回送信
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveKeyReminders}
+                disabled={isSaving}
+                className="py-2 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                {isSaving ? '保存中...' : '催促設定を保存する'}
+              </button>
+            </div>
+
+            {/* ========================================================= */}
+            {/* REAL-TIME DEBUG PANEL (【デバッグパネル】) */}
+            {/* ========================================================= */}
+            <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                  <Activity className="w-3 h-3 text-blue-500" />
+                  催促デバッグ情報（リアルタイム）
+                </span>
+                <button
+                  type="button"
+                  onClick={() => forceCheckKeyReminders({ force: true })}
+                  className="text-[10px] font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 px-2 py-1 rounded-lg border border-red-200 dark:border-red-800 transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                >
+                  <Zap className="w-3 h-3" />
+                  強制判定を実行
+                </button>
+              </div>
+
+              {/* 【要件4】設定された催促開始時刻と現在の判定時刻を並べて表示（時間判定カード） */}
+              <div className="p-3 rounded-2xl bg-slate-900 dark:bg-black/40 border border-slate-700/60 text-white space-y-2.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-300 tracking-wider flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    時間判定チェック（JST基準）
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      keyReminderDebug?.isBeforeStartTime
+                        ? 'bg-amber-950/70 border-amber-500/50 text-amber-300'
+                        : 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                    }`}
+                  >
+                    {keyReminderDebug?.isBeforeStartTime
+                      ? `⏳ 開始前（あと${keyReminderDebug?.remainingMinutesUntilStart ?? '--'}分）`
+                      : '✓ 催促開始時刻に到達'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="p-2.5 rounded-xl bg-slate-800/90 border border-slate-700">
+                    <p className="text-[9px] text-slate-400 font-medium">現在の判定時刻 (JST)</p>
+                    <p className="text-sm font-mono font-bold text-white mt-0.5">
+                      {keyReminderDebug?.currentJstTime || '--:--'}
+                    </p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-800/90 border border-slate-700">
+                    <p className="text-[9px] text-slate-400 font-medium">設定された催促開始時刻</p>
+                    <p className="text-sm font-mono font-bold text-amber-400 mt-0.5">
+                      {keyReminderDebug?.configStartTime || keyReminderStartTime || '18:00'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-2 rounded-xl bg-slate-800/60 text-[10px] border border-slate-700/60 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">時間判定結果:</span>
+                    <span className={`font-bold ${keyReminderDebug?.isBeforeStartTime ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {keyReminderDebug?.isBeforeStartTime
+                        ? '開始時刻前のため自動送信を完全にブロック中'
+                        : '開始時刻に到達（催促送信チェック可能）'}
+                    </span>
+                  </div>
+                  {keyReminderDebug?.timeComparisonDetail && (
+                    <p className="text-[9px] font-mono text-slate-400 truncate">
+                      {keyReminderDebug.timeComparisonDetail}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* 詳細ステータスグリッド */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">判定ステップ</p>
+                  <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 truncate">
+                    {keyReminderDebug?.step || '待機中'}
+                  </p>
+                </div>
+
+                {/* 送信条件クリア */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">送信条件クリア</p>
+                  <p className={`text-xs font-bold ${keyReminderDebug?.isConditionMet ? 'text-emerald-600' : 'text-slate-500'}`}>
+                    {keyReminderDebug?.isConditionMet ? 'はい (送信対象)' : 'いいえ (待機中)'}
+                  </p>
+                </div>
+
+                {/* 催促機能の内部フラグとUIスイッチ状態 */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">催促機能の内部フラグ</p>
+                  <p className={`text-xs font-bold ${settings.keyReminders?.enabled ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {settings.keyReminders?.enabled ? 'ON (true)' : 'OFF (false)'}
+                  </p>
+                </div>
+
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">UIスイッチ状態</p>
+                  <p className={`text-xs font-bold ${keyReminderEnabled ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {keyReminderEnabled ? 'ON (true)' : 'OFF (false)'}
+                  </p>
+                </div>
+
+                {/* 本日の自動送信回数 */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">本日の自動送信回数</p>
+                  <p className="text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+                    {keyReminderDebug?.todaySendCount ?? 0} / {keyReminderDebug?.maxCount ?? keyReminderMaxCount ?? 10}回
+                  </p>
+                </div>
+
+                {/* 深夜判定 */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">深夜帯判定 (0:00〜6:00)</p>
+                  <p className={`text-xs font-bold ${keyReminderDebug?.isMidnight ? 'text-amber-600' : 'text-slate-400'}`}>
+                    {keyReminderDebug?.isMidnight ? '深夜帯 (制限中)' : '通常時間帯'}
+                  </p>
+                </div>
+
+                {/* 鍵① 本日 */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">鍵① 本日</p>
+                  <p className={`text-xs font-bold ${keyReminderDebug?.key1Status === '施錠済み' || keyReminderDebug?.key1Status === '報告済み' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {keyReminderDebug?.key1Status || '未判定'}
+                  </p>
+                </div>
+
+                {/* 鍵② 本日 */}
+                <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">鍵② 本日</p>
+                  <p className={`text-xs font-bold ${keyReminderDebug?.key2Status === '施錠済み' || keyReminderDebug?.key2Status === '報告済み' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {keyReminderDebug?.key2Status || '未判定'}
+                  </p>
+                </div>
+
+                {/* 次回送信予定時刻 (横幅いっぱい) */}
+                <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 col-span-2">
+                  <p className="text-[9px] text-slate-500 dark:text-slate-400">次回の送信予定時刻</p>
+                  <p className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 mt-0.5">
+                    {keyReminderDebug?.nextScheduledTime || keyReminderStartTime || '--:--'}
+                  </p>
+                </div>
+
+                {/* 施錠報告ロック & クールダウン情報 */}
+                {(keyReminderDebug?.isReminderLocked || keyReminderDebug?.isCooldownActive) && (
+                  <div className="col-span-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-1">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800 dark:text-amber-300">
+                      <Lock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <span>{keyReminderDebug.isReminderLocked ? '🔒 施錠報告ロック作動中' : '⏳ 連打防止クールダウン中'}</span>
+                    </div>
+                    <p className="text-[10px] text-amber-700 dark:text-amber-300/90">
+                      {keyReminderDebug.isReminderLocked
+                        ? (keyReminderDebug.lockDetail || '部員が鍵の施錠操作中のため、誤送信を防ぐため催促通知を一時停止しています。')
+                        : '直近1分以内に催促通知が送信されたため、通知の連続送信（連打）を防止しています。'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* フラグの一致確認インジケーター */}
+              <div className={`p-2 rounded-lg text-xs font-bold flex items-center justify-between border ${
+                (settings.keyReminders?.enabled ?? false) === keyReminderEnabled
+                  ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300'
+              }`}>
+                <span>スイッチと内部フラグの整合性:</span>
+                <span>
+                  {(settings.keyReminders?.enabled ?? false) === keyReminderEnabled
+                    ? '✓ 一致しています'
+                    : '⚠ 不一致（保存処理中）'}
+                </span>
+              </div>
+
+              {/* 停止・待機理由の明瞭表示（正常待機 vs 正常完了 vs 設定OFF を判別） */}
+              {keyReminderDebug?.skipReason ? (
+                <div
+                  className={`p-3 rounded-2xl border space-y-1.5 transition-colors ${
+                    keyReminderDebug.reasonType === 'normal_completed'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800'
+                      : keyReminderDebug.reasonType === 'disabled'
+                      ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800'
+                      : 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        keyReminderDebug.reasonType === 'normal_completed'
+                          ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                          : keyReminderDebug.reasonType === 'disabled'
+                          ? 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700'
+                          : 'bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 border-blue-300 dark:border-blue-700'
+                      }`}
+                    >
+                      {keyReminderDebug.reasonType === 'normal_completed'
+                        ? '✓ 正常完了（催促不要）'
+                        : keyReminderDebug.reasonType === 'disabled'
+                        ? '⚠ 設定OFFによる停止'
+                        : 'ℹ️ 正常待機中（時間待ち）'}
+                    </span>
+                    {keyReminderDebug.reasonCategory && (
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                        {keyReminderDebug.reasonCategory}
+                      </span>
+                    )}
+                  </div>
+
+                  <p
+                    className={`text-xs font-bold leading-snug ${
+                      keyReminderDebug.reasonType === 'normal_completed'
+                        ? 'text-emerald-800 dark:text-emerald-200'
+                        : keyReminderDebug.reasonType === 'disabled'
+                        ? 'text-rose-800 dark:text-rose-200'
+                        : 'text-blue-800 dark:text-blue-200'
+                    }`}
+                  >
+                    停止理由: {keyReminderDebug.skipReason}
+                  </p>
+
+                  {keyReminderDebug.offReasonDetail && (
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
+                      詳細情報: {keyReminderDebug.offReasonDetail}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>催促通知の送信条件を満たしています（定期タイマーで送信中）</span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-0.5 text-[9px] text-slate-400 px-1 italic">
+                <span>最終チェック時刻: {keyReminderDebug?.lastCheckTime || 'なし'}</span>
+                <span>最終通知送信時刻: {keyReminderDebug?.lastSentTime || 'なし'}</span>
+              </div>
+
+              {/* Vercel Cron Jobs & Google Cloud Scheduler 定時実行連携案内 */}
+              <div className="mt-3 p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2 text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
+                  <Server className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                  <span>Vercel Cron Jobs / Cloud Scheduler 定時催促連携</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  PWAがバックグラウンド時でも毎日指定時刻（20:00 JST）に催促を確実に届けるため、Vercel Cron Jobs（またはCloud Scheduler）から定期実行されます。
+                </p>
+                <div className="p-2.5 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] space-y-1.5 overflow-x-auto">
+                  <div className="text-amber-400 font-bold"># Vercel Cron Jobs (vercel.json)</div>
+                  <div>Schedule: 0 11 * * * (毎日20:00 JST / 11:00 UTC)</div>
+                  <div>Endpoint: /api/cron/key-reminder</div>
+                  <div>Auth Header: Authorization: Bearer (CRON_SECRET)</div>
+                  <div className="text-slate-400 text-[9px] pt-1 border-t border-slate-800">
+                    ※両方の鍵が報告済みなら送信せず終了 (200 OK)。未報告の場合のみLINE WORKS (Server ID: 40170745) へ催促メッセージを自動配信します。
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* Section: Key Report Cleanup (【鍵の報告履歴クリーンアップ】) */}
+          {/* ========================================================= */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  鍵の報告履歴クリーンアップ（デバッグ用）
+                </h3>
+              </div>
+              <span className="text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800">
+                管理者専用
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              Firestoreの鍵状態（key_status）および報告履歴（key_logs）に残っている「部員」「齋藤凌吾」などの不正な報告者名データを、ログインユーザー「{getSafeUserName(myMemberName)}」へ上書き是正します。
+            </p>
+
+            {cleanupResultMsg && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{cleanupResultMsg}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleCleanupKeyReports}
+              disabled={isCleaningUp}
+              className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 active:scale-[0.99] text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-sm"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCleaningUp ? 'animate-spin' : ''}`} />
+              <span>{isCleaningUp ? 'クリーンアップ処理中...' : '鍵の報告履歴をクリーンアップする（デバッグ用）'}</span>
+            </button>
+          </div>
+
+          {/* ========================================================= */}
+          {/* Section: Key Report LINE WORKS Status & Error Log (【施錠報告 LINE WORKS自動送信状況】) */}
+          {/* ========================================================= */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  施錠報告 LINE WORKS自動通知 状況
+                </h3>
+              </div>
+              <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-800">
+                自動連携
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              部員が「閉めました」を押した際、誰がどの鍵を閉めたかをLINE WORKSへ即時自動投稿します（鍵催促用または出欠連絡用のBotを利用）。
+            </p>
+
+            {/* 送信ステータス / エラーログ */}
+            {settings.lastLwKeyReportStatus ? (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-all ${
+                  settings.lastLwKeyReportStatus.success
+                    ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                }`}
+              >
+                {settings.lastLwKeyReportStatus.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-1 flex-1 min-w-0">
+                  <p className="font-bold">
+                    {settings.lastLwKeyReportStatus.success
+                      ? '✓ 施錠報告のLINE WORKS送信: 正常完了'
+                      : '⚠ 施錠報告のLINE WORKS送信に失敗しました'}
+                  </p>
+                  {settings.lastLwKeyReportStatus.error && !settings.lastLwKeyReportStatus.success && (
+                    <p className="text-[11px] font-mono text-rose-700 dark:text-rose-300 bg-rose-100/60 dark:bg-rose-900/40 p-1.5 rounded-lg">
+                      エラー詳細: {settings.lastLwKeyReportStatus.error}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-slate-400">
+                    最終送信日時: {formatTimestamp(settings.lastLwKeyReportStatus.timestamp)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-slate-500 text-xs">
+                施錠報告のLINE WORKS送信履歴はまだありません（次回「閉めました」報告時に送信されます）
+              </div>
+            )}
+
+            {keyReportTestMsg && (
+              <div
+                className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                  keyReportTestMsg.success
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 text-rose-800 dark:text-rose-200'
+                }`}
+              >
+                {keyReportTestMsg.success ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                )}
+                <span>{keyReportTestMsg.text}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSendKeyReportTest}
+              disabled={keyReportTesting}
+              className="w-full py-2 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>{keyReportTesting ? 'テスト送信中...' : '施錠報告のLINE WORKS通知をテスト送信'}</span>
+            </button>
+          </div>
+
+          {/* ========================================================= */}
+          {/* Section: Broadcast Notification (【全体通知・一斉連絡配信】) */}
+          {/* ========================================================= */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Megaphone className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                全体通知・一斉連絡配信
+              </h3>
+              <span className="text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                管理者専用
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              部員全員のアプリ内通知一覧およびLINE WORKSへ、連絡事項や急なお知らせを一斉送信できます。
+            </p>
+
+            {broadcastSuccessMsg && (
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>{broadcastSuccessMsg}</span>
+              </div>
+            )}
+
+            {broadcastErrorMsg && (
+              <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-xl text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <span>{broadcastErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Broadcast Form */}
+            <form onSubmit={handleSendBroadcast} className="space-y-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                部員全員へのお知らせ作成
+              </span>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                  タイトル
+                </label>
+                <input
+                  type="text"
+                  value={broadcastTitle}
+                  onChange={(e) => setBroadcastTitle(e.target.value)}
+                  placeholder="例: 【重要】明日の練習時間・持ち物変更について"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 font-medium"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                  連絡内容
+                </label>
+                <textarea
+                  rows={3}
+                  value={broadcastMessage}
+                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  placeholder="例: 明日は13:00からホール練習です。譜面台と合奏譜を忘れないように持参してください。"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 font-medium leading-relaxed"
+                  required
+                />
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer text-xs pt-0.5">
+                <input
+                  type="checkbox"
+                  checked={broadcastSendToLw}
+                  onChange={(e) => setBroadcastSendToLw(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="font-medium text-slate-700 dark:text-slate-300">
+                  LINE WORKSのトークルームへも同時に投稿する
+                </span>
+              </label>
+
+              <button
+                type="submit"
+                disabled={broadcastSending || !broadcastTitle.trim() || !broadcastMessage.trim()}
+                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {broadcastSending ? '全体通知を送信中...' : '部員全員へ一斉送信'}
+              </button>
+            </form>
+
+            {/* Daily Summary Broadcast Action */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                  日報まとめ（出欠集計）の手動即時配信
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  自動配信時刻: {summaryNotificationTime}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                本日の出欠集計メッセージを、指定時刻を待たずに今すぐLINE WORKSへ即時配信します。
+              </p>
+
+              {summarySuccessMsg && (
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-lg text-xs flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{summarySuccessMsg}</span>
+                </div>
+              )}
+
+              {summaryErrorMsg && (
+                <div className="p-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-lg text-xs flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>{summaryErrorMsg}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSendManualSummary}
+                disabled={summarySending}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Send className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                {summarySending ? '日報集計を送信中...' : '本日の日報まとめを今すぐ配信'}
+              </button>
+            </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* Section: Event Notifications (【イベント通知設定】) */}
+          {/* ========================================================= */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4 transition-colors">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <CalendarCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                イベント通知設定（予定リマインダー）
+              </h3>
+              <span className="text-[10px] font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800">
+                管理者専用
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              予定表（カレンダー）に登録された合宿・本番・ホール練習などのイベントについて、前日や当日にLINE WORKSへ自動でリマインダー通知を送信します。
+            </p>
+
+            {evTestSuccessMsg && (
+              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>{evTestSuccessMsg}</span>
+              </div>
+            )}
+
+            {evTestErrorMsg && (
+              <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-xl text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <span>{evTestErrorMsg}</span>
+              </div>
+            )}
+
+            {/* Toggle Switch */}
+            <div className="p-3.5 bg-purple-50/50 dark:bg-purple-950/20 rounded-xl border border-purple-200/80 dark:border-purple-800 flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                  イベントリマインダー機能を有効にする
+                </span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                  ONにすると、登録されたイベントの事前通知を自動で行います
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={evReminderEnabled}
+                  onChange={(e) => setEvReminderEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+              </label>
+            </div>
+
+            {evReminderEnabled && (
+              <div className="space-y-3 pt-1 text-xs">
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                  <span className="font-bold text-slate-700 dark:text-slate-300 block text-[11px]">
+                    通知タイミング設定
+                  </span>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      defaultChecked
+                      className="rounded text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-slate-700 dark:text-slate-300">
+                      前日（18:00 JST）に翌日の予定・服装・持ち物を通知
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      defaultChecked
+                      className="rounded text-purple-600 focus:ring-purple-500"
+                    />
+                    <span className="text-slate-700 dark:text-slate-300">
+                      当日朝（7:00 JST）に本日の予定・集合時間をリマインド
+                    </span>
                   </label>
                 </div>
 
-                {keyReminderEnabled && (
-                  <div className="space-y-4 pt-3 border-t border-slate-200 dark:border-slate-800">
-                    {/* 通知の切り替え設定 */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 cursor-pointer text-xs transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={keyAppEnabled}
-                          onChange={(e) => setKeyAppEnabled(e.target.checked)}
-                          className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
-                        />
-                        <span className="font-bold text-slate-800 dark:text-slate-200">アプリ内プッシュ通知</span>
-                      </label>
-                      <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 cursor-pointer text-xs transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={keyLwEnabled}
-                          onChange={(e) => setKeyLwEnabled(e.target.checked)}
-                          className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4"
-                        />
-                        <span className="font-bold text-slate-800 dark:text-slate-200">LINE WORKSへの通知</span>
-                      </label>
-                    </div>
-
-                    {/* 催促する日の条件設定 */}
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 cursor-pointer text-xs transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={keyReminderOnlyActiveDays}
-                          onChange={(e) => setKeyReminderOnlyActiveDays(e.target.checked)}
-                          className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
-                        />
-                        <div className="flex-1">
-                          <span className="font-bold text-slate-800 dark:text-slate-200">出欠確認（まとめ通知）がオンの日のみ催促する</span>
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            部活休み（通知OFF）やカレンダーで休みに設定した日は催促を行いません。
-                          </p>
-                        </div>
-                      </label>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
-                          催促を開始する時刻
-                        </label>
-                        <div className="space-y-2">
-                          <label className="flex items-center gap-2 cursor-pointer mb-2">
-                            <input
-                              type="checkbox"
-                              checked={keyReminderUseSummaryTime}
-                              onChange={(e) => setKeyReminderUseSummaryTime(e.target.checked)}
-                              className="w-3.5 h-3.5 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
-                            />
-                            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                              まとめ通知と同じ時刻にする
-                            </span>
-                          </label>
-                          <TimePulldown
-                            value={keyReminderStartTime}
-                            onChange={setKeyReminderStartTime}
-                            disabled={keyReminderUseSummaryTime}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
-                          催促を送る間隔
-                        </label>
-                        <select
-                          value={keyReminderInterval}
-                          onChange={(e) => setKeyReminderInterval(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer appearance-none"
-                        >
-                          <option value={10}>10分おき</option>
-                          <option value={15}>15分おき（推奨）</option>
-                          <option value={20}>20分おき</option>
-                          <option value={30}>30分おき</option>
-                          <option value={45}>45分おき</option>
-                          <option value={60}>60分おき（1時間）</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
-                          最大催促回数
-                        </label>
-                        <select
-                          value={keyReminderMaxCount}
-                          onChange={(e) => setKeyReminderMaxCount(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer appearance-none"
-                        >
-                          <option value={1}>1回のみ</option>
-                          <option value={2}>2回まで</option>
-                          <option value={3}>3回まで（推奨）</option>
-                          <option value={4}>4回まで</option>
-                          <option value={5}>5回まで</option>
-                          <option value={10}>10回まで</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end pt-1">
-                      <button
-                        type="button"
-                        onClick={handleSendTestKeyReminder}
-                        className="text-[11px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3 py-1.5 rounded-xl border border-amber-200 dark:border-amber-800 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      >
-                        <BellRing className="w-3.5 h-3.5" />
-                        テスト催促通知を1回送信
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 注意事項 */}
-              <div className="p-3.5 bg-amber-50/70 dark:bg-amber-950/40 rounded-xl border border-amber-200/80 dark:border-amber-900/60 text-[11px] text-amber-900 dark:text-amber-200 space-y-1.5 transition-colors">
-                <p className="font-bold flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                  催促通知の動作仕様
-                </p>
-                <ul className="list-disc list-inside space-y-1 text-amber-800 dark:text-amber-300 opacity-90">
-                  <li>どちらか片方の鍵でも未報告なら催促が送られます。</li>
-                  <li>両方の鍵が「閉めました」と報告された時点で、その日の催促は自動停止します。</li>
-                  <li>深夜・早朝（0:00〜6:00）は催促通知が自動的に抑制されます。</li>
-                  <li>設定した最大催促回数に達すると、以降の再催促は自動停止します。</li>
-                </ul>
-              </div>
-
-              <button
-                type="submit"
-                id="btn-save-key-reminders"
-                disabled={isSaving}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-2xl text-sm shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-              >
-                <Check className="w-4 h-4" />
-                {isSaving ? '保存中...' : '催促設定を保存する'}
-              </button>
-            </form>
-          </div>
-
-          {/* Admin Section: Key Reset Settings (鍵報告のリセット設定) */}
-          <div
-            id="admin-key-reset-settings"
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <RotateCcw className="w-4 h-4 text-slate-500" />
-                鍵報告のリセット・自動リセット設定
-              </h3>
-              <span className="text-[10px] font-bold bg-slate-50 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
-                管理者専用
-              </span>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer transition-colors">
-                <input
-                  type="checkbox"
-                  id="checkbox-key-reset-admin-only"
-                  checked={keyResetAdminOnly}
-                  onChange={(e) => setKeyResetAdminOnly(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <div className="flex-1">
-                  <span className="text-xs font-bold text-slate-800 block">
-                    鍵のリセット操作を管理者のみに制限する
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    オフの場合、すべての部員がリセットボタンを操作できます（デフォルトは全員可）
-                  </span>
+                <div className="p-2.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-[11px] text-purple-800 dark:text-purple-200 flex items-center justify-between">
+                  <span>🤖 イベント通知用Bot: <strong>{settings.lineWorksEvents?.botId ? `専用Bot (ID: ${settings.lineWorksEvents.botId})` : `出欠連絡Botと共通`}</strong></span>
+                  <span className="text-[10px] text-purple-600 font-bold">下部のBot総合管理で設定可能</span>
                 </div>
-              </label>
+              </div>
+            )}
 
-              <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 cursor-pointer transition-colors">
-                <input
-                  type="checkbox"
-                  id="checkbox-auto-reset-midnight"
-                  checked={autoResetKeysAtMidnight}
-                  onChange={(e) => setAutoResetKeysAtMidnight(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <div className="flex-1">
-                  <span className="text-xs font-bold text-slate-800 block">
-                    深夜0時に鍵の状態を自動でリセットする
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    翌日の連絡漏れを防ぐため、毎日00:00に「未報告」状態に戻します
-                  </span>
-                </div>
-              </label>
-              
-              <p className="text-[10px] text-slate-400 px-1 italic">
-                ※ 設定を保存するには、上の「鍵の催促設定を保存する」または下の「設定を保存」ボタンを押してください。
-              </p>
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={handleSendEventReminderTest}
+                disabled={evTesting}
+                className="w-full py-2 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <CalendarCheck className="w-3.5 h-3.5" />
+                {evTesting ? 'テスト送信中...' : 'イベント通知のテスト送信'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveEventReminder}
+                disabled={isSaving}
+                className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                {isSaving ? '保存中...' : 'イベント通知設定を保存'}
+              </button>
             </div>
           </div>
 
-          {/* Admin Section: Auto Attendance Settings (出席の自動記録設定) */}
-          <div
-            id="admin-auto-attendance-settings"
-            className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4"
-          >
+          {/* Section: LINE WORKS Multi-Bot Settings (【LINE WORKS 3ボット総合管理: 出欠・鍵催促・イベント】) */}
+          <LineWorksMultiBotSettings />
+
+          {/* Section: Member Management */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                出席の自動記録設定
-              </h3>
-              <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-800">
-                管理者専用
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              ユーザーが明示的に送信しなくても、条件に合わせて自動的に「出席」を記録します。
-              すでに欠席や遅刻の連絡がある場合は上書きされません。
-            </p>
-
-            {autoAttSaved && (
-              <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>自動出席設定を保存しました。</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveAutoAttendanceSettings} className="space-y-4">
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={autoAttEnabled}
-                    onChange={(e) => setAutoAttEnabled(e.target.checked)}
-                    className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
-                  />
-                  <div className="flex-1">
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">自動出席記録を有効にする</span>
-                  </div>
-                </label>
-
-                {autoAttEnabled && (
-                  <div className="pl-7 space-y-4 animate-in slide-in-from-top-1 duration-200">
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">実行タイミング</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAutoAttMode('on_app_open')}
-                          className={`p-3 rounded-xl border-2 text-left transition-all ${
-                            autoAttMode === 'on_app_open'
-                              ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400'
-                          }`}
-                        >
-                          <div className="text-xs font-bold mb-0.5">アプリ起動時</div>
-                          <div className="text-[10px] opacity-80">その日初めてアプリを開いた時に記録</div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAutoAttMode('at_specific_time')}
-                          className={`p-3 rounded-xl border-2 text-left transition-all ${
-                            autoAttMode === 'at_specific_time'
-                              ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400'
-                          }`}
-                        >
-                          <div className="text-xs font-bold mb-0.5">設定時刻（一括）</div>
-                          <div className="text-[10px] opacity-80">指定した時刻に未連絡者を一括記録</div>
-                        </button>
-                      </div>
-                    </div>
-
-                    {autoAttMode === 'at_specific_time' && (
-                      <div className="space-y-2 animate-in fade-in duration-200">
-                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">記録を実行する時刻</label>
-                        <TimePulldown value={autoAttTime} onChange={setAutoAttTime} />
-                        <p className="text-[10px] text-slate-500">
-                          ※ この時刻に誰かがアプリを開いているか、その後に初めて誰かが開いたタイミングで実行されます。
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSaving}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-2xl text-sm shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Check className="w-4 h-4" />
-                {isSaving ? '保存中...' : '自動出席設定を保存'}
-              </button>
-            </form>
-          </div>
-
-          {/* Admin Section 2: Change Passcode */}
-          <div
-            id="admin-passcode-settings"
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-3"
-          >
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Key className="w-4 h-4 text-blue-600" />
-              合言葉の変更
-            </h3>
-            <p className="text-xs text-slate-500">
-              現在の合言葉: <span className="font-mono font-bold text-slate-700">{settings.adminPasscode || 'admin1234'}</span>
-            </p>
-
-            {passcodeSuccess && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{passcodeSuccess}</span>
-              </div>
-            )}
-            {passcodeChangeError && (
-              <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                <span>{passcodeChangeError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleChangePasscode} className="space-y-3">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  新しい合言葉（4文字以上）
-                </label>
-                <input
-                  type="text"
-                  id="input-new-passcode"
-                  value={newPasscode}
-                  onChange={(e) => setNewPasscode(e.target.value)}
-                  placeholder="新しい合言葉を入力"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  新しい合言葉（確認用）
-                </label>
-                <input
-                  type="text"
-                  id="input-confirm-passcode"
-                  value={confirmPasscode}
-                  onChange={(e) => setConfirmPasscode(e.target.value)}
-                  placeholder="もう一度入力"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                id="btn-update-passcode"
-                disabled={isSaving}
-                className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-600 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
-              >
-                {isSaving ? '保存中...' : '合言葉を変更する'}
-              </button>
-            </form>
-          </div>
-
-          {/* Admin Section 3: Member Management (Add & Delete) */}
-          <div
-            id="admin-member-management"
-            className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs space-y-4"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
                 <Users className="w-4 h-4 text-blue-600" />
-                部員の管理
+                部員名簿管理（{members.length}名）
               </h3>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 font-semibold">
-                  現在 {members.length}名
-                </span>
-                {members.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearAllMembers}
-                    className="text-[11px] text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg border border-red-200 font-bold transition-colors"
-                  >
-                    全員一括削除
-                  </button>
-                )}
-              </div>
             </div>
 
-            {memberError && (
-              <div className="p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                <span>{memberError}</span>
-              </div>
-            )}
-
-            {/* Add Member Form */}
-            <form onSubmit={handleAddMember} className="space-y-2.5 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
-              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 block">
-                新しい部員を追加
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <form onSubmit={handleAddMemberSubmit} className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 block">部員の新規追加</span>
+              <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
-                  id="input-add-member-name"
                   value={newMemberName}
                   onChange={(e) => setNewMemberName(e.target.value)}
-                  placeholder="部員名（氏名）"
-                  className="sm:col-span-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="部員氏名"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200 font-medium"
                   required
                 />
-                <input
-                  type="text"
-                  id="input-add-member-grade"
-                  value={newMemberGrade}
-                  onChange={(e) => setNewMemberGrade(e.target.value)}
-                  placeholder="学年 (例: 1年)"
-                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              {/* Section & Part Selectors for New Member */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <select
-                  id="select-add-member-section"
                   value={newMemberSection}
                   onChange={(e) => {
-                    const sec = e.target.value;
-                    setNewMemberSection(sec);
-                    const availableParts = sec ? SECTION_PARTS_MAP[sec as SectionCategory] || [] : [];
-                    if (!availableParts.includes(newMemberPart)) {
-                      setNewMemberPart(availableParts[0] || '');
-                    }
+                    setNewMemberSection(e.target.value);
+                    const pList = getPartsForSection(e.target.value);
+                    setNewMemberPart(pList[0] || '');
                   }}
-                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200 font-medium"
                 >
-                  <option value="">区分を選択（任意）...</option>
-                  {SECTION_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
+                  {SECTIONS_AND_PARTS.map((s) => (
+                    <option key={s.section} value={s.section}>
+                      {s.section}
                     </option>
                   ))}
                 </select>
+              </div>
 
+              <div className="grid grid-cols-2 gap-2">
                 <select
-                  id="select-add-member-part"
                   value={newMemberPart}
                   onChange={(e) => setNewMemberPart(e.target.value)}
-                  disabled={!newMemberSection}
-                  className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200 font-medium"
                 >
-                  <option value="">
-                    {newMemberSection ? '詳細パートを選択...' : '先に区分を選択'}
-                  </option>
-                  {newMemberSection &&
-                    (SECTION_PARTS_MAP[newMemberSection as SectionCategory] || []).map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
+                  {getPartsForSection(newMemberSection).map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
                 </select>
+                <button
+                  type="submit"
+                  className="py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition-colors"
+                >
+                  追加
+                </button>
               </div>
-
-              <button
-                type="submit"
-                id="btn-add-member"
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 shadow-xs transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                部員を追加する
-              </button>
             </form>
 
-            {/* Current Members List */}
-            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 divide-y divide-slate-100 dark:divide-slate-800">
-              {members.length === 0 ? (
-                <div className="py-6 text-center text-xs text-slate-400">
-                  部員が登録されていません。上のフォームから追加してください。
-                </div>
-              ) : (
-                members.map((m) => (
-                  <div
-                    key={m.id}
-                    className="py-2 flex items-center justify-between text-xs"
-                  >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-bold text-slate-800 dark:text-slate-100">{m.name}</span>
-                      {m.part ? (
-                        <span className="px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 text-[10px] font-semibold border border-blue-200 dark:border-blue-800">
-                          {m.part}
-                        </span>
-                      ) : m.section ? (
-                        <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-medium">
-                          {m.section}
-                        </span>
-                      ) : null}
-                      {m.grade && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-medium">
-                          {m.grade}
-                        </span>
-                      )}
-                      {m.role && m.role !== '部員' && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-800">
-                          {m.role}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleDeleteMember(m.id, m.name)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg transition-colors"
-                      title="削除"
-                      aria-label={`${m.name}を削除`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+            <div className="max-h-48 overflow-y-auto space-y-1 divide-y divide-slate-100 dark:divide-slate-800">
+              {members.map((m) => (
+                <div key={m.id} className="pt-1.5 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">{m.name}</span>
+                    <span className="text-[10px] text-slate-400 ml-2">
+                      ({m.section || '未設定'} / {m.part || '未設定'})
+                    </span>
                   </div>
-                ))
-              )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`「${m.name}」さんを名簿から削除しますか？`)) {
+                        deleteMember(m.id);
+                      }
+                    }}
+                    className="p-1 text-slate-400 hover:text-red-500"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
-          </div>
-        </div>
-      ) : (
-        /* 3. When NOT logged in as Admin: Inconspicuous Admin Login Section at bottom */
-        <div className="pt-6">
-          <div className="border-t border-slate-200 pt-4 text-center">
-            {!showAdminSection ? (
-              <button
-                id="btn-toggle-admin-login"
-                onClick={() => setShowAdminSection(true)}
-                className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 py-2 px-3 rounded-lg hover:bg-slate-100 transition-colors"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>管理者メニュー</span>
-                <ChevronDown className="w-3.5 h-3.5" />
-              </button>
-            ) : (
-              <div
-                id="admin-login-card"
-                className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-3 animate-in fade-in duration-200"
-              >
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Shield className="w-3.5 h-3.5 text-blue-600" />
-                    管理者ログイン（合言葉方式）
-                  </h4>
-                  <button
-                    onClick={() => setShowAdminSection(false)}
-                    className="text-slate-400 hover:text-slate-600 p-1"
-                  >
-                    <ChevronUp className="w-4 h-4" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  管理者の合言葉を入力してください（初期値: admin1234）
-                </p>
-
-                {passcodeError && (
-                  <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-center gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{passcodeError}</span>
-                  </div>
-                )}
-
-                <form onSubmit={handleAdminLogin} className="space-y-2.5">
-                  <input
-                    type="password"
-                    id="input-admin-passcode"
-                    value={passcodeAttempt}
-                    onChange={(e) => setPasscodeAttempt(e.target.value)}
-                    placeholder="合言葉を入力"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                    required
-                  />
-
-                  <button
-                    type="submit"
-                    id="btn-submit-admin-login"
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-xs transition-colors"
-                  >
-                    管理者としてログイン
-                  </button>
-                </form>
-              </div>
-            )}
           </div>
         </div>
       )}
 
-      {/* Pattern Manager Modal */}
-      <PatternManagerModal
-        isOpen={isPatternModalOpen}
-        onClose={() => setIsPatternModalOpen(false)}
-        patterns={patterns}
-        onSavePatterns={savePatterns}
-      />
-
-      {/* Notification Guide Modal */}
-      <NotificationGuideModal
-        isOpen={notifGuideOpen}
-        onClose={() => setNotifGuideOpen(false)}
-        reason={notifGuideReason}
-        onTestNotification={sendTestNotification}
-      />
-
-      {/* PWA Install Guide Modal */}
-      {showPwaGuide && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl space-y-6">
-            <div className="flex items-center justify-between">
-              <h4 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-blue-600" />
-                ホーム画面への追加方法
-              </h4>
-              <button
-                onClick={() => setShowPwaGuide(false)}
-                className="p-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-500"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-5">
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
-                <p className="text-xs font-black text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-2">
-                  <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px]">1</span>
-                  iPhone / Safari の場合
-                </p>
-                <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed pl-7">
-                  1. 画面下部の<Share2 className="w-3.5 h-3.5 inline mx-1" /><strong>共有ボタン</strong>をタップ
-                  <br />
-                  2. メニューを下にスクロール
-                  <br />
-                  3. <strong>「ホーム画面に追加」</strong>をタップ
-                </div>
-              </div>
-
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
-                <p className="text-xs font-black text-slate-800 dark:text-slate-100 flex items-center gap-2 mb-2">
-                  <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px]">2</span>
-                  Android / Chrome の場合
-                </p>
-                <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed pl-7">
-                  1. 右上の<span className="font-bold">「︙」メニュー</span>をタップ
-                  <br />
-                  2. <strong>「アプリをインストール」</strong>または<br /><strong>「ホーム画面に追加」</strong>をタップ
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowPwaGuide(false)}
-              className="w-full py-3 bg-blue-600 text-white font-black rounded-2xl shadow-lg shadow-blue-600/20 active:scale-[0.98] transition-all"
-            >
-              わかりました
-            </button>
+      {/* PWA & キャッシュ更新カード（スマホ表示最適化・全ユーザー利用可） */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 transition-colors">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+              アプリ情報 & PWAキャッシュ更新
+            </h3>
           </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold">
+            v99 (最新版)
+          </span>
         </div>
-      )}
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          ホーム画面に追加したPWAアプリで表示が古い場合や更新が反映されない場合は、下のボタンからキャッシュを初期化して最新コードを再読み込みできます。
+        </p>
+        <button
+          type="button"
+          onClick={handleForceClearCache}
+          disabled={isClearingCache}
+          className="w-full py-2.5 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700 disabled:opacity-50 cursor-pointer shadow-xs active:scale-[0.99]"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isClearingCache ? 'animate-spin text-emerald-600' : 'text-slate-500'}`} />
+          <span>{isClearingCache ? '最新版を取得中...' : 'キャッシュを初期化して最新版に更新'}</span>
+        </button>
+      </div>
     </div>
   );
 };

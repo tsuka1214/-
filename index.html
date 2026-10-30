@@ -1,26 +1,94 @@
 <!doctype html>
 <html lang="ja">
   <head>
+    <script>
+      window.$RefreshReg$ = window.$RefreshReg$ || function () {};
+      window.$RefreshSig$ = window.$RefreshSig$ || function () { return function (type) { return type; }; };
+      window.__vite_plugin_react_preamble_installed__ = true;
+    </script>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>部活動出欠連絡</title>
-    <meta name="description" content="部活動の欠席・遅刻・早退・出席の連絡をリアルタイムに集約し、LINE WORKSのbot連携で当日の出席状況を自動通知するアプリ" />
-    <meta property="og:title" content="部活動出欠連絡" />
-    <meta property="og:description" content="部活動の欠席・遅刻・早退・出席の連絡をリアルタイムに集約し、LINE WORKSのbot連携で当日の出席状況を自動通知するアプリ" />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#2563eb" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="部活出欠" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!-- Safari PWA キャッシュ無効化メタタグ -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>吹奏楽部 出欠連絡</title>
+    <meta name="description" content="吹奏楽部の欠席・遅刻・早退の連絡をリアルタイムに集約し、LINE WORKSのbot連携で当日の出欠状況を自動通知するアプリ" />
+    <meta property="og:title" content="吹奏楽部 出欠連絡" />
+    <meta property="og:description" content="吹奏楽部の欠席・遅刻・早退の連絡をリアルタイムに集約し、LINE WORKSのbot連携で当日の出欠状況を自動通知するアプリ" />
+    <meta property="og:type" content="website" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.json" />
+    <script>
+      // iOS Safari PWA キャッシュ強制パージ (v99未適用時のクリーンアップ)
+      if ('caches' in window) {
+        var vKey = 'app_cache_version_v99';
+        if (!localStorage.getItem(vKey)) {
+          caches.keys().then(function (keys) {
+            return Promise.all(
+              keys.map(function (k) {
+                if (k !== 'app-cache-v99') {
+                  console.log('[PWA] Purging old cache storage:', k);
+                  return caches.delete(k);
+                }
+              })
+            );
+          }).then(function () {
+            localStorage.setItem(vKey, 'true');
+          }).catch(function () {});
+        }
+      }
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker
+            .register('/sw.js?v=99', { updateViaCache: 'none' })
+            .then(function (reg) {
+              console.log('[PWA] ServiceWorker registered with scope:', reg.scope);
+              // 即座に更新チェックを実行
+              reg.update().catch(function () {});
+
+              // 待機中の新しいWorkerがあれば即時スキップ要求
+              if (reg.waiting) {
+                reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+              }
+
+              reg.addEventListener('updatefound', function () {
+                var newWorker = reg.installing;
+                if (newWorker) {
+                  newWorker.addEventListener('statechange', function () {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                      newWorker.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                  });
+                }
+              });
+            })
+            .catch(function (err) {
+              console.warn('[PWA] ServiceWorker registration failed:', err);
+            });
+        });
+
+        // スマホでホーム画面からPWA復帰時（画面復帰時）に最新版を自動チェック
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') {
+            navigator.serviceWorker.getRegistration().then(function (reg) {
+              if (reg) {
+                reg.update().catch(function () {});
+                if (reg.waiting) {
+                  reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+              }
+            }).catch(function () {});
+          }
+        });
+      }
+    </script>
   </head>
-  <body>
+  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-blue-500 selection:text-white min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

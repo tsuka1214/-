@@ -1,221 +1,225 @@
-export type AttendanceType = '出席' | '欠席' | '遅刻' | '早退' | '緊急遽刻';
+export type TabType = 'home' | 'status' | 'form' | 'calendar' | 'notifications' | 'settings';
 
-export type ThemeMode = 'system' | 'light' | 'dark';
+export type ActiveAttendanceType = '欠席' | '遅刻' | '早退' | '緊急遽刻';
+export type AttendanceType = ActiveAttendanceType | '出席';
 
 export interface AttendanceRecord {
   id: string;
   date: string; // YYYY-MM-DD
   memberName: string;
-  section?: string; // 区分: '木管' | '金管' | '打楽器'
-  part?: string; // 詳細パート: 'クラリネット', 'トランペット', etc.
   type: AttendanceType;
   reason?: string;
-  time?: string; // e.g. "16:30ごろ" for 遅刻 / 早退
-  authorDeviceToken?: string; // identifier stored in localStorage to recognize "your" post
-  createdAt: number; // timestamp
+  time?: string;
+  section?: string;
+  part?: string;
+  createdAt?: number;
   updatedAt?: number;
 }
 
 export interface ClubMember {
   id: string;
   name: string;
-  grade?: string; // e.g. "1年", "2年", "3年"
-  role?: string; // e.g. "部長", "副部長", "部員"
-  section?: string; // 区分: '木管' | '金管' | '打楽器'
-  part?: string; // 詳細パート
-  order?: number;
+  grade?: string;
+  role?: string;
+  section?: string;
+  part?: string;
+  createdAt?: number;
 }
 
-export interface AttendancePattern {
+export interface PenaltyStage {
+  threshold: number;
+  title: string;
+  penaltyText: string;
+}
+
+export interface JustReachedPenaltyStage {
+  stage: PenaltyStage;
+  count: number;
+}
+
+export type PackingListCategory = '合宿' | 'コンクール' | '演奏会' | '通常練習' | 'その他';
+export type EventClothing = '制服' | '部Tシャツ' | '私服' | 'ステージ衣装' | 'その他';
+
+export interface ClubEvent {
   id: string;
-  name: string;
-  type: AttendanceType;
-  time?: string;
-  reason?: string;
-  isCustom?: boolean;
-}
-
-export interface LineWorksConfig {
-  enabled: boolean;
-  mode?: 'api2' | 'webhook'; // default to api2 if configured
-  webhookUrl?: string;
-  botName?: string;
-  sendDailySummary: boolean;
-  sendTardyAlert: boolean;
-  sendEventReminder?: boolean; // 【新規】イベントリマインダー通知
-  // LINE WORKS API 2.0 parameters
-  clientId?: string;
-  clientSecret?: string;
-  serviceAccount?: string;
-  privateKey?: string; // RSA Private Key in PEM format
-  botId?: string;
-  channelId?: string; // target group chat / channel id
-}
-
-export interface DaySchedule {
-  enabled: boolean; // この曜日にまとめ通知を配信するかどうか
-  time: string; // 例: "08:30" や "16:00"
-  label?: string; // 例: "朝練", "午後練習", "休日練習", "OFF/部活なし"
-}
-
-export interface SchedulePreset {
-  id: string;
-  name: string;
-  schedule: Record<string, DaySchedule>;
-}
-
-export interface DateOverrideSchedule {
-  enabled: boolean;
-  time: string;
-  label?: string;
-}
-
-export type WeeklySchedule = Record<number, DaySchedule>;
-
-export interface AppSettings {
-  summaryNotificationTime: string; // e.g. "08:30" (デフォルト・フォールバック)
-  weeklyNotificationSchedule?: Record<string, DaySchedule>; // 曜日別設定 ("0" = 日, "1" = 月, ..., "6" = 土)
-  dateSpecificOverrides?: Record<string, DateOverrideSchedule>; // カレンダー特定日の例外設定 ("YYYY-MM-DD")
-  notificationsEnabled: boolean;
-  adminPasscode: string; // default "admin1234"
-  clubName: string; // default "部活動"
-  lastSummaryDate?: string; // last date the daily summary notification was fired
-  customPatterns?: AttendancePattern[];
+  title: string;
+  date: string; // YYYY-MM-DD
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  category?: PackingListCategory;
+  clothing?: EventClothing;
+  notes?: string;
+  createdAt?: number;
   updatedAt?: number;
-  lineWorks?: LineWorksConfig;
-  lineWorksKeyReminder?: LineWorksConfig; // 【新規】鍵催促用LINE WORKS連携
-  lineWorksEvents?: LineWorksConfig; // 【新規】イベントリマインダー用LINE WORKS連携
-  keyNames?: {
-    key1: string;
-    key2: string;
-  };
-  keyReminders?: KeyRemindersSettings;
-  keyResetAdminOnly?: boolean;
-  autoResetKeysAtMidnight?: boolean;
-  autoAttendance?: {
-    enabled: boolean;
-    mode: 'on_app_open' | 'at_specific_time';
-    time?: string; // "HH:mm"
-  };
-  penaltyThreshold?: number; // 【旧】罰ゲーム執行に必要なスタンプ数 (デフォルト 3)
-  penaltyStages?: PenaltyStage[]; // 【新】多段階罰ゲーム設定
-  schedulePresets?: SchedulePreset[]; // 通知スケジュールのカスタムプリセット
-  lastLwStatus?: {
-    success: boolean;
-    error?: string;
-    timestamp: number;
-    statusCode?: number;
-  };
-  lastLwKRStatus?: {
-    success: boolean;
-    error?: string;
-    timestamp: number;
-    statusCode?: number;
-  };
-  lastLwEvStatus?: {
-    success: boolean;
-    error?: string;
-    timestamp: number;
-    statusCode?: number;
-  };
 }
 
-export interface KeyRemindersSettings {
-  enabled: boolean;
-  appNotificationEnabled?: boolean; // 【新規】アプリ内通知のオンオフ
-  lineWorksNotificationEnabled?: boolean; // 【新規】LINE WORKS通知のオンオフ
-  startTime: string; // 例: "18:00"
-  intervalMinutes: number; // 例: 15, 30
-  maxCount: number; // 例: 3, 5
-  onlyOnActiveDays?: boolean; // 【新規】出欠確認がオンの日のみ催促する
-  useSummaryTime?: boolean; // 【新規】まとめ通知と同じ時刻に催促を開始する
+export type KeyId = 'key1' | 'key2';
+export type KeyStatusType = 'open' | 'closed';
+
+export interface ClubKeyStatus {
+  id: KeyId;
+  status: KeyStatusType;
+  reportedBy?: string;
+  reporterName?: string;
+  operatorName?: string;
+  section?: string;
+  operatorSection?: string;
+  part?: string;
+  operatorPart?: string;
+  updatedAt: number;
+  timestamp?: number;
+  createdAt?: number;
+  resetBy?: string;
+  resetAt?: number;
+  lastClosedReporter?: string;
+  lastClosedAt?: number;
+}
+
+export interface ClubKeyLog {
+  id: string;
+  keyId: KeyId;
+  keyName?: string;
+  status: KeyStatusType;
+  reportedBy: string;
+  reporterName?: string;
+  operatorName?: string;
+  section?: string;
+  operatorSection?: string;
+  part?: string;
+  operatorPart?: string;
+  timestamp: number;
+  updatedAt?: number;
+  createdAt?: number;
+}
+
+export interface EmergencyStampCard {
+  id: string;
+  memberName: string;
+  totalCount: number;
+  monthlyCounts: Record<string, number>; // 'YYYY-MM' -> count
+  lastStampedAt: number;
 }
 
 export interface NotificationItem {
   id: string;
   title: string;
   message: string;
-  body?: string;
-  type: 'urgent' | 'summary' | 'info' | 'reminder';
-  relatedDate?: string; // YYYY-MM-DD
-  attendanceId?: string;
-  isRead?: boolean;
-  createdAt: number;
-  keyId?: KeyId;
+  type?: string;
   reminderCount?: number;
+  relatedDate?: string;
+  createdAt: number;
+  isRead?: boolean;
 }
 
-export type TabType = 'home' | 'form' | 'status' | 'notifications' | 'settings' | 'events';
-
-export type KeyId = 'key1' | 'key2';
-export type KeyStatusType = 'open' | 'closed';
-
-export interface ClubKeyStatus {
-  keyId?: KeyId;
-  status: KeyStatusType;
-  updatedAt: number;
-  operatorName: string;
-  operatorSection?: string;
-  operatorPart?: string;
-  keyName?: string;
+export interface KeyRemindersConfig {
+  enabled: boolean;
+  startTime?: string;
+  intervalMinutes?: number;
+  maxCount?: number;
+  onlyOnActiveDays?: boolean;
+  useSummaryTime?: boolean;
+  appNotificationEnabled?: boolean;
+  lineWorksNotificationEnabled?: boolean;
+  midnightSuppressionEnabled?: boolean;
 }
 
-export interface ClubKeyLog {
-  id: string;
-  keyId?: KeyId;
-  status: KeyStatusType;
-  updatedAt: number;
-  operatorName: string;
-  operatorSection?: string;
-  operatorPart?: string;
-  keyName?: string;
+export interface KeyReminderDebugInfo {
+  currentJstTime: string;
+  configStartTime: string;
+  isMidnight: boolean;
+  midnightSuppressionEnabled: boolean;
+  isConditionMet: boolean;
+  step: string;
+  key1Status: string;
+  key2Status: string;
+  lastCheckTime?: string;
+  lastSentTime?: string;
+  skipReason?: string;
+  offReasonDetail?: string;
+  internalEnabledFlag?: boolean;
+  uiSwitchState?: boolean;
+  todaySendCount?: number;
+  maxCount?: number;
+  nextScheduledTime?: string;
+  isBeforeStartTime?: boolean;
+  timeComparisonDetail?: string;
+  remainingMinutesUntilStart?: number;
+  isReminderLocked?: boolean;
+  isCooldownActive?: boolean;
+  lockDetail?: string;
+  reasonType?: 'normal_standby' | 'normal_completed' | 'disabled' | 'in_progress';
+  reasonCategory?: string;
 }
 
-export type StampStage = 'normal' | 'slight_danger' | 'heavy_danger' | 'legendary';
-
-export interface PenaltyStage {
-  threshold: number;
-  label?: string; // 自由な名前 (例: 「小罰」「大罰」「伝説の罰」)
-  description?: string; // 罰ゲームの具体的な内容 (例: 「楽器庫の掃除」)
+export interface LineWorksConfig {
+  enabled: boolean;
+  mode: 'webhook' | 'api2';
+  webhookUrl?: string;
+  botName?: string;
+  clientId?: string;
+  clientSecret?: string;
+  serviceAccount?: string;
+  privateKey?: string;
+  botId?: string;
+  channelId?: string;
+  serverId?: string;
+  sendDailySummary?: boolean;
+  sendTardyAlert?: boolean;
+  sendEventReminder?: boolean;
 }
 
-export interface EmergencyStampCard {
-  id: string;
-  memberName: string;
-  section?: string;
-  part?: string;
-  totalCount: number;
-  monthlyCounts: Record<string, number>; // "YYYY-MM" -> number
-  penaltyGame?: string;
-  milestonesNotified?: number[];
-  updatedAt: number;
+export interface LastTransmissionStatus {
+  success: boolean;
+  error?: string;
+  statusCode?: number | null;
+  timestamp: number;
 }
 
-export interface PackingListCategory {
-  category: string;
-  items: string[];
+export interface WeeklyScheduleDay {
+  enabled: boolean;
+  time: string;
+  label?: string;
 }
 
-export interface EventClothing {
-  top: string;
-  bottom: string;
-  shoes?: string;
-  other?: string;
+export interface AppSettings {
+  summaryNotificationTime: string;
+  weeklyNotificationSchedule: Record<number, WeeklyScheduleDay>;
+  dateSpecificOverrides: Record<string, { enabled: boolean; time?: string }>;
+  notificationsEnabled: boolean;
+  adminPasscode: string;
+  clubName: string;
+  penaltyStages?: PenaltyStage[];
+  emergencyKeywords?: string[];
+  autoAttendance?: {
+    enabled: boolean;
+    mode: 'on_app_open' | 'at_specific_time';
+    time?: string;
+  };
+  autoResetKeysAtMidnight?: boolean;
+  eventNotificationTimings?: number[];
+  keyNames?: {
+    key1: string;
+    key2: string;
+  };
+  keyReminders?: KeyRemindersConfig;
+  lineWorks?: LineWorksConfig;
+  lineWorksKeyReminder?: LineWorksConfig;
+  lineWorksEvents?: LineWorksConfig;
+  lastLwStatus?: LastTransmissionStatus;
+  lastLwKRStatus?: LastTransmissionStatus;
+  lastLwEvStatus?: LastTransmissionStatus;
+  lastLwKeyReportStatus?: LastTransmissionStatus;
+  attendancePatterns?: AttendancePattern[];
+  updatedAt?: number;
 }
 
-export interface ClubEvent {
+export interface AttendancePattern {
   id: string;
   name: string;
-  startDate: string; // YYYY-MM-DD
-  endDate: string; // YYYY-MM-DD
-  location?: string;
-  gatheringTime?: string;
-  memo?: string;
-  clothing?: EventClothing;
-  packingList?: PackingListCategory[];
-  reminderEnabled?: boolean;
-  reminderDays?: number[]; // 【新規】通知する日数 (例: [7, 3, 1, 0])
-  createdAt: number;
-  updatedAt: number;
+  type: ActiveAttendanceType;
+  reason: string;
+  time?: string;
 }
 
+export type ThemeMode = 'light' | 'dark' | 'system';
